@@ -19,4 +19,3 @@ Experimental code, use with caution.
 | ✅         | JOIN #channel     | Subscribe       | Subscribes to channel messages, and gets last 200                     |
 | ❌         | PART #channel     | Unsubscribe     |                                                                       |
 | ❌         | PRIVMSG nick      | Encrypted DM?   |                                                                       |
-|-----------|-------------------|-----------------|-----------------------------------------------------------------------|

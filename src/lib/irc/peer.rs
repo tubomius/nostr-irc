@@ -8,8 +8,9 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinSet;
 use futures::StreamExt;
-use nostr::{Event, EventBuilder, Kind, KindBase, RelayMessage};
+use nostr::{Event, EventBuilder, Kind, KindBase, Metadata, RelayMessage};
 use nostr::event::TagKind;
+use nostr::hashes::hex::ToHex;
 use nostr::message::relay::MessageHandleError;
 use tokio_tungstenite::tungstenite::Message;
 use crate::irc::client_data::{ClientDataHolder, IRCClientData};
@@ -231,6 +232,18 @@ pub fn handle_nostr_event(event: &Box<Event>) -> Option<String> {
                             }
                         }
                     }
+                }
+                KindBase::ChannelCreation => {
+                    let channel = event.id.to_hex();
+                    let metadata = serde_json::from_slice::<Metadata>(event.content.as_ref()).unwrap();
+
+                    return Some(
+                        format!(
+                            "322 #{channel} 0 :{} ({})",
+                            metadata.name.unwrap_or(String::from("")),
+                            metadata.about.unwrap_or(String::from("")),
+                        )
+                    );
                 }
                 _ => {}
             }

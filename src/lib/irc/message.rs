@@ -10,7 +10,7 @@ use nostr_sdk::subscription::{Channel, Subscription};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{client, Message};
 use crate::irc::client_data::ClientDataHolder;
 use crate::irc::message::IRCMessage::UNKNOWN;
 use crate::irc::peer::IRCPeer;
@@ -22,6 +22,7 @@ pub enum IRCMessage {
     QUIT(String),
     PASS(String),
     JOIN(String),
+    LIST(),
     PRIVMSG(String, String),
     USER(String, String, String, String),
     UNKNOWN(Vec<String>),
@@ -47,6 +48,9 @@ impl IRCMessage {
                     Self::NICK(
                         parts.get(1).unwrap().to_string(),
                     )
+                }
+                "LIST" => {
+                    Self::LIST()
                 }
                 "QUIT" => {
                     Self::QUIT(
@@ -104,6 +108,21 @@ impl IRCMessage {
             },
             Self::QUIT(_) => {
                 Some(format!("QUIT"))
+            }
+            Self::LIST() => {
+                let channel_list = ClientMessage::new_req(
+                    format!("list"),
+                    vec![
+                        SubscriptionFilter::new()
+                            .kind(Kind::Base(KindBase::ChannelCreation))
+                    ],
+                ).to_json();
+
+                println!("join channel: list: {channel_list}");
+
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_list)).await.expect("Impossible to list channels");
+
+                None
             }
             Self::JOIN(channel) => {
                 let channel = channel.split_once("#").unwrap().1;

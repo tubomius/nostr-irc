@@ -570,13 +570,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostr-irc-server"
+name = "nostr-irc"
 version = "0.1.0"
 dependencies = [
  "futures",
  "futures-util",
  "nostr",
  "nostr-sdk",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-tungstenite 0.18.0",
 ]

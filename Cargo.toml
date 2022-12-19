@@ -1,5 +1,5 @@
 [package]
-name = "nostr-irc-server"
+name = "nostr-irc"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,3 +18,5 @@ nostr = "0.8"
 tokio-tungstenite = { version = "0.18.0", features = ["connect", "stream", "rustls-tls-native-roots"] }
 futures-util = "0.3.25"
 futures = { version = "0.3.25", default-features = false, features = ["async-await"] }
+serde = "1.0.151"
+serde_json = "1.0.91"

@@ -1,0 +1,16 @@
+[package]
+name = "nostr-irc-server"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lib"
+path = "src/lib/mod.rs"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.23.0", features = ["net", "macros", "rt-multi-thread", "sync", "io-util"] }
+

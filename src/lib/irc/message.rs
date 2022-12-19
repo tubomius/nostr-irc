@@ -1,0 +1,123 @@
+use std::error::Error;
+use tokio::net::TcpListener;
+use crate::irc::client_data::ClientDataHolder;
+use crate::irc::message::IRCMessage::UNKNOWN;
+use crate::irc::peer::IRCPeer;
+
+#[derive(Debug, Clone)]
+pub enum IRCMessage {
+    CAP(String, Option<i32>),
+    NICK(String),
+    QUIT(String),
+    PASS(String),
+    PRIVMSG(String, String),
+    USER(String, String, String, String),
+    UNKNOWN(Vec<String>),
+}
+
+impl IRCMessage {
+    pub fn from_string(s: String) -> Self {
+        let parts = get_parts(s);
+
+        if parts.len() == 0 {
+            return UNKNOWN(vec![]);
+        }
+
+        if let Some(first) = parts.get(0) {
+            match &first[..] {
+                "CAP" => {
+                    Self::CAP(
+                        parts.get(1).unwrap().to_string(),
+                        parts.get(2).map_or(None, |s| s.parse::<i32>().ok()),
+                    )
+                }
+                "NICK" => {
+                    Self::NICK(
+                        parts.get(1).unwrap().to_string(),
+                    )
+                }
+                "QUIT" => {
+                    Self::QUIT(
+                        parts.get(1).unwrap().to_string(),
+                    )
+                }
+                "PASS" => {
+                    Self::PASS(
+                        parts.get(1).unwrap().to_string(),
+                    )
+                }
+                "PRIVMSG" => {
+                    Self::PRIVMSG(
+                        parts.get(1).unwrap().to_string(),
+                        parts.get(2).unwrap().to_string(),
+                    )
+                }
+                "USER" => {
+                    Self::USER(
+                        parts.get(1).unwrap().to_string(),
+                        parts.get(2).unwrap().to_string(),
+                        parts.get(3).unwrap().to_string(),
+                        parts.get(4).unwrap().to_string(),
+                    )
+                }
+                _ => UNKNOWN(parts.into_iter().map(|s| s.to_string()).collect()),
+            }
+        }  else {
+            UNKNOWN(parts.into_iter().map(|s| s.to_string()).collect())
+        }
+    }
+
+    pub async fn get_response(&self, client_data: &ClientDataHolder) -> Option<String> {
+        match self {
+            IRCMessage::CAP(s, _) => {
+                if s == "LS" {
+                    Some(format!("CAP * LS"))
+                } else {
+                    let nick = client_data.read().await.get_nick();
+                    let private_key = client_data.read().await.get_private_key();
+
+                    if !private_key.is_none() {
+                        if let Some(nick) = nick {
+                            return Some(format!("001 {nick} :Welcome to the Internet Relay Network"))
+                        }
+                    }
+
+                    Some(format!("ERROR :No nick or no private key, set password to your private key"))
+                }
+            },
+            Self::QUIT(_) => {
+                Some(format!("QUIT"))
+            }
+            Self::PASS(s) => {
+                client_data.write().await.set_private_key(s.clone());
+
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+fn get_parts(s: String) -> Vec<String> {
+    let parts = s.split(" ");
+    let mut final_parts = vec![];
+
+    let mut last_started = false;
+    let mut last = String::from("");
+    for p in parts {
+        if p.starts_with(":") {
+            last_started = true;
+            last = p.split_once(":").unwrap().1.to_string();
+        } else if last_started {
+            last = format!("{last} {p}");
+        } else {
+            final_parts.push(p.to_string());
+        }
+    }
+
+    if last_started {
+        final_parts.push(last.to_string());
+    }
+
+    final_parts
+}

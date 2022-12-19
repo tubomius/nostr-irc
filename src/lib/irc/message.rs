@@ -1,5 +1,13 @@
 use std::error::Error;
+use tokio::net::TcpStream;
+use std::sync::Arc;
+use futures_util::{AsyncWriteExt, SinkExt};
+use futures_util::stream::SplitSink;
+use nostr::{ClientMessage, Event, EventBuilder, Metadata};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::tungstenite::Message;
 use crate::irc::client_data::ClientDataHolder;
 use crate::irc::message::IRCMessage::UNKNOWN;
 use crate::irc::peer::IRCPeer;
@@ -67,7 +75,7 @@ impl IRCMessage {
         }
     }
 
-    pub async fn get_response(&self, client_data: &ClientDataHolder) -> Option<String> {
+    pub async fn handle_message(&self, client_data: &ClientDataHolder, nostr_client: &Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>) -> Option<String> {
         match self {
             IRCMessage::CAP(s, _) => {
                 if s == "LS" {
@@ -90,6 +98,26 @@ impl IRCMessage {
             }
             Self::PASS(s) => {
                 client_data.write().await.set_private_key(s.clone());
+
+                None
+            }
+            Self::USER(_, _, _, _) => {
+                println!("nostr: set metadata");
+
+                let metadata = Metadata::new()
+                    .name(client_data.read().await.get_nick().unwrap())
+                    .display_name(client_data.read().await.get_nick().unwrap())
+                    .about("description wat");
+
+                let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
+
+                let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
+
+                println!("nostr: send msg");
+                let msg = ClientMessage::new_event(event).to_json();
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
+
+                println!("nostr: metadata sent");
 
                 None
             }

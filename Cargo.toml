@@ -13,4 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.23.0", features = ["net", "macros", "rt-multi-thread", "sync", "io-util"] }
-
+nostr-sdk = "0.8.0"
+nostr = "0.8"
+tokio-tungstenite = { version = "0.18.0", features = ["connect", "stream", "rustls-tls-native-roots"] }
+futures-util = "0.3.25"
+futures = { version = "0.3.25", default-features = false, features = ["async-await"] }

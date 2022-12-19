@@ -1,10 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
+use nostr::url::Url;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinSet;
+use futures::StreamExt;
 use crate::irc::client_data::{ClientDataHolder, IRCClientData};
 use crate::irc::message::IRCMessage;
 
@@ -25,10 +27,34 @@ impl IRCPeer {
 
         let mut set = JoinSet::new();
 
+        let (stream, _) = tokio_tungstenite::connect_async(Url::parse("wss://nostr-pub.wellorder.net")?).await?;
+
+        let (mut write_stream, mut read_stream) = stream.split();
+
+        let nostr_client = Arc::new(Mutex::new(
+            write_stream,
+        ));
+
         let (mut tx, mut rx) = mpsc::unbounded_channel();
 
         {
+            let nostr_client = nostr_client.clone();
+            set.spawn(async move {
+                println!("Listening...");
+                loop {
+                    if let Some(m) = read_stream.next().await {
+                        if let Ok(m) = m {
+                            println!("nostr: {m:?}");
+                        }
+                    }
+
+                    tokio::task::yield_now().await;
+                }
+            });
+        }
+        {
             let client_data = self.client_data.clone();
+            let nostr_client = nostr_client.clone();
             set.spawn(async move {
                 let mut lines = reader.lines();
                 loop {
@@ -53,6 +79,7 @@ impl IRCPeer {
         }
         {
             let client_data = self.client_data.clone();
+            let nostr_client = nostr_client.clone();
             set.spawn(async move {
                 loop {
                     let incoming = rx.recv().await;
@@ -63,7 +90,7 @@ impl IRCPeer {
                             _ => {}
                         }
 
-                        let response = msg.get_response(&client_data).await;
+                        let response = msg.handle_message(&client_data, &nostr_client).await;
 
                         if let Some(response) = response {
                             if response == "QUIT" {

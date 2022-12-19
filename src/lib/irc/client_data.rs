@@ -1,5 +1,7 @@
 use std::error::Error;
+use std::str::FromStr;
 use std::sync::Arc;
+use nostr::Keys;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::sync::{mpsc, RwLock};
@@ -13,6 +15,7 @@ pub struct IRCClientData {
     nick: Option<String>,
     private_key: Option<String>,
     public_key: Option<String>,
+    pub identity: Option<Keys>,
 }
 
 impl IRCClientData {
@@ -21,6 +24,7 @@ impl IRCClientData {
             nick: None,
             private_key: None,
             public_key: None,
+            identity: None,
         }
     }
 
@@ -37,6 +41,10 @@ impl IRCClientData {
     }
 
     pub fn set_private_key(&mut self, private_key: String) {
+        let my_identity = Keys::from_str(&*private_key).unwrap();
+
+        self.public_key = Some(my_identity.public_key_as_str());
         self.private_key = Some(private_key);
+        self.identity = Some(my_identity);
     }
 }

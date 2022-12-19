@@ -108,12 +108,23 @@ impl IRCMessage {
             Self::JOIN(channel) => {
                 let channel = channel.split_once("#").unwrap().1;
 
-                let subscribe_to_channel = ClientMessage::new_req(
+                let channel_info = ClientMessage::new_req(
                     channel,
                     vec![SubscriptionFilter::new().id(channel)],
                 ).to_json();
 
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(subscribe_to_channel)).await.expect("Impossible to send message");
+                println!("join channel: info: {channel_info}");
+
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_info)).await.expect("Impossible to send message");
+
+                let channel_messages = ClientMessage::new_req(
+                    channel,
+                    vec![SubscriptionFilter::new().kind(Kind::Base(KindBase::ChannelMessage)).limit(200).event(channel.parse().unwrap())],
+                ).to_json();
+
+                println!("join channel: messages: {channel_messages}");
+
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_messages)).await.expect("Impossible to send message");
 
                 None
             }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use nostr::url::Url;
@@ -7,6 +8,10 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinSet;
 use futures::StreamExt;
+use nostr::{Event, EventBuilder, Kind, KindBase, RelayMessage};
+use nostr::event::TagKind;
+use nostr::message::relay::MessageHandleError;
+use tokio_tungstenite::tungstenite::Message;
 use crate::irc::client_data::{ClientDataHolder, IRCClientData};
 use crate::irc::message::IRCMessage;
 
@@ -23,6 +28,7 @@ impl IRCPeer {
 
     pub async fn run(&mut self, socket: TcpStream) -> Result<(), Box<dyn Error>> {
         let (reader, mut writer) = socket.into_split();
+        let writer = Arc::new(Mutex::new(writer));
         let reader = BufReader::new(reader);
 
         let mut set = JoinSet::new();
@@ -38,13 +44,94 @@ impl IRCPeer {
         let (mut tx, mut rx) = mpsc::unbounded_channel();
 
         {
+            let client_data = self.client_data.clone();
             let nostr_client = nostr_client.clone();
+            let writer = writer.clone();
             set.spawn(async move {
                 println!("Listening...");
+                let mut subscription_ids = HashMap::new();
+                let mut ended_subscriptions = vec![];
                 loop {
                     if let Some(m) = read_stream.next().await {
                         if let Ok(m) = m {
                             println!("nostr: {m:?}");
+                            match m {
+                                Message::Text(t) => {
+                                    let msg = RelayMessage::from_json(&*t);
+
+                                    match msg {
+                                        Ok(m) => {
+                                            match m {
+                                                RelayMessage::Event { event, subscription_id } => {
+                                                    if !ended_subscriptions.contains(&subscription_id) {
+                                                        if !subscription_ids.contains_key(&subscription_id) {
+                                                            subscription_ids.insert(subscription_id.clone(), vec![]);
+                                                        }
+
+                                                        let backlog = subscription_ids.get_mut(&subscription_id);
+
+                                                        if let Some(b) = backlog {
+                                                            (*b).push(event);
+                                                        }
+                                                    } else {
+                                                        let response = handle_nostr_event(&event);
+
+                                                        if let Some(response) = response {
+                                                            let mut writer = writer.lock().await;
+
+                                                            match writer.write(response.as_ref()).await {
+                                                                Ok(_) => {}
+                                                                Err(_) => {}
+                                                            }
+
+                                                            match writer.write("\r\n".as_ref()).await {
+                                                                Ok(_) => {}
+                                                                Err(_) => {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                RelayMessage::Notice { .. } => {}
+                                                RelayMessage::EndOfStoredEvents { subscription_id } => {
+                                                    let backlog = subscription_ids.get_mut(&subscription_id);
+
+                                                    if let Some(b) = backlog {
+                                                        b.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+                                                        for m in b.iter() {
+                                                            let response = handle_nostr_event(m);
+
+                                                            if let Some(response) = response {
+                                                                println!("sending {response}");
+
+                                                                let mut writer = writer.lock().await;
+
+                                                                match writer.write(response.as_ref()).await {
+                                                                    Ok(_) => {}
+                                                                    Err(_) => {}
+                                                                }
+
+                                                                match writer.write("\r\n".as_ref()).await {
+                                                                    Ok(_) => {}
+                                                                    Err(_) => {}
+                                                                }
+                                                            }
+                                                        }
+
+                                                        *b = vec![];
+
+                                                        ended_subscriptions.push(subscription_id);
+                                                    }
+                                                }
+                                                RelayMessage::Ok { .. } => {}
+                                                RelayMessage::Empty => {}
+                                            }
+                                        }
+                                        Err(_) => {}
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
                     }
 
@@ -80,6 +167,7 @@ impl IRCPeer {
         {
             let client_data = self.client_data.clone();
             let nostr_client = nostr_client.clone();
+            let writer = writer.clone();
             set.spawn(async move {
                 loop {
                     let incoming = rx.recv().await;
@@ -98,6 +186,8 @@ impl IRCPeer {
                             }
 
                             println!("send: {}", response);
+
+                            let mut writer = writer.lock().await;
 
                             match writer.write(response.as_ref()).await {
                                 Ok(_) => {}
@@ -120,4 +210,33 @@ impl IRCPeer {
 
         Ok(())
     }
+}
+
+pub fn handle_nostr_event(event: &Box<Event>) -> Option<String> {
+    match event.kind {
+        Kind::Base(k) => {
+            match k {
+                KindBase::ChannelMessage => {
+                    for tag in &event.tags {
+                        if let Ok(tk) = tag.kind() {
+                            match tk {
+                                TagKind::E => {
+                                    let channel = tag.content();
+
+                                    if let Some(channel) = channel {
+                                        return Some(format!(":{} PRIVMSG #{channel} :{}", event.pubkey, event.content));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    return None;
 }

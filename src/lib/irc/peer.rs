@@ -27,7 +27,7 @@ impl IRCPeer {
 
         let mut set = JoinSet::new();
 
-        let (stream, _) = tokio_tungstenite::connect_async(Url::parse("wss://nostr-pub.wellorder.net")?).await?;
+        let (stream, _) = tokio_tungstenite::connect_async(Url::parse("wss://relay.nostr.ch")?).await?;
 
         let (mut write_stream, mut read_stream) = stream.split();
 

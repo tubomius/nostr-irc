@@ -1,9 +1,12 @@
 use std::error::Error;
+use std::str::FromStr;
 use tokio::net::TcpStream;
 use std::sync::Arc;
 use futures_util::{AsyncWriteExt, SinkExt};
 use futures_util::stream::SplitSink;
-use nostr::{ClientMessage, Event, EventBuilder, Metadata};
+use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, Metadata, Sha256Hash, SubscriptionFilter, Tag};
+use nostr::event::{TagData, TagKind};
+use nostr_sdk::subscription::{Channel, Subscription};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -18,6 +21,7 @@ pub enum IRCMessage {
     NICK(String),
     QUIT(String),
     PASS(String),
+    JOIN(String),
     PRIVMSG(String, String),
     USER(String, String, String, String),
     UNKNOWN(Vec<String>),
@@ -49,6 +53,11 @@ impl IRCMessage {
                         parts.get(1).unwrap().to_string(),
                     )
                 }
+                "JOIN" => {
+                    Self::JOIN(
+                        parts.get(1).unwrap().to_string(),
+                    )
+                }
                 "PASS" => {
                     Self::PASS(
                         parts.get(1).unwrap().to_string(),
@@ -77,7 +86,7 @@ impl IRCMessage {
 
     pub async fn handle_message(&self, client_data: &ClientDataHolder, nostr_client: &Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>) -> Option<String> {
         match self {
-            IRCMessage::CAP(s, _) => {
+            Self::CAP(s, _) => {
                 if s == "LS" {
                     Some(format!("CAP * LS"))
                 } else {
@@ -95,6 +104,41 @@ impl IRCMessage {
             },
             Self::QUIT(_) => {
                 Some(format!("QUIT"))
+            }
+            Self::JOIN(channel) => {
+                let channel = channel.split_once("#").unwrap().1;
+
+                let subscribe_to_channel = ClientMessage::new_req(
+                    channel,
+                    vec![SubscriptionFilter::new().id(channel)],
+                ).to_json();
+
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(subscribe_to_channel)).await.expect("Impossible to send message");
+
+                None
+            }
+            Self::PRIVMSG(channel, message) => {
+                println!("nostr: send channel message");
+
+                let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
+
+                let channel = channel.split_once("#").unwrap().1;
+
+                let event: Event = EventBuilder::new(
+                    Kind::Base(KindBase::ChannelMessage),
+                    message,
+                    &[Tag::new(TagData::Generic(
+                        TagKind::E,
+                        vec![channel.to_string()],
+                    ))],
+                ).to_event(&my_keys).unwrap();
+
+                let msg = ClientMessage::new_event(event).to_json();
+                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
+
+                println!("nostr: channel message sent");
+
+                None
             }
             Self::PASS(s) => {
                 client_data.write().await.set_private_key(s.clone());
@@ -114,6 +158,7 @@ impl IRCMessage {
                 let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
 
                 println!("nostr: send msg");
+
                 let msg = ClientMessage::new_event(event).to_json();
                 nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
 

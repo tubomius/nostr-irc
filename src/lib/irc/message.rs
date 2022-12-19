@@ -125,25 +125,29 @@ impl IRCMessage {
                 None
             }
             Self::JOIN(channel) => {
-                let channel = channel.split_once("#").unwrap().1;
+                let channels = channel.split(",");
 
-                let channel_info = ClientMessage::new_req(
-                    channel,
-                    vec![SubscriptionFilter::new().id(channel)],
-                ).to_json();
+                for channel in channels {
+                    let channel = channel.split_once("#").unwrap().1;
 
-                println!("join channel: info: {channel_info}");
+                    let channel_info = ClientMessage::new_req(
+                        format!("{channel}-info"),
+                        vec![SubscriptionFilter::new().id(channel)],
+                    ).to_json();
 
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_info)).await.expect("Impossible to send message");
+                    println!("join channel: info: {channel_info}");
 
-                let channel_messages = ClientMessage::new_req(
-                    channel,
-                    vec![SubscriptionFilter::new().kind(Kind::Base(KindBase::ChannelMessage)).limit(200).event(channel.parse().unwrap())],
-                ).to_json();
+                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_info)).await.expect("Impossible to send message");
 
-                println!("join channel: messages: {channel_messages}");
+                    let channel_messages = ClientMessage::new_req(
+                        format!("{channel}-messages"),
+                        vec![SubscriptionFilter::new().kind(Kind::Base(KindBase::ChannelMessage)).limit(200).event(channel.parse().unwrap())],
+                    ).to_json();
 
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_messages)).await.expect("Impossible to send message");
+                    println!("join channel: messages: {channel_messages}");
+
+                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_messages)).await.expect("Impossible to send message");
+                }
 
                 None
             }
@@ -174,6 +178,32 @@ impl IRCMessage {
                 client_data.write().await.set_private_key(s.clone());
 
                 None
+            }
+            Self::NICK(s) => {
+                let old_nick = client_data.read().await.get_nick().clone();
+
+                client_data.write().await.set_nick(s.clone());
+
+                if let Some(old_nick) = old_nick {
+                    let metadata = Metadata::new()
+                        .name(s)
+                        .display_name(s);
+
+                    let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
+
+                    let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
+
+                    println!("nostr: send msg");
+
+                    let msg = ClientMessage::new_event(event).to_json();
+                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
+
+                    println!("nostr: metadata sent");
+
+                    Some(format!(":{old_nick} NICK {s}"))
+                } else {
+                    None
+                }
             }
             Self::USER(_, _, _, _) => {
                 println!("nostr: set metadata");

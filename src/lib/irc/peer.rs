@@ -8,10 +8,12 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinSet;
 use futures::StreamExt;
+use futures_util::stream::SplitSink;
 use nostr::{Event, EventBuilder, Kind, KindBase, Metadata, RelayMessage};
 use nostr::event::TagKind;
 use nostr::hashes::hex::ToHex;
 use nostr::message::relay::MessageHandleError;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use tokio_tungstenite::tungstenite::Message;
 use crate::irc::client_data::{ClientDataHolder, IRCClientData};
 use crate::irc::message::IRCMessage;
@@ -51,7 +53,7 @@ impl IRCPeer {
             set.spawn(async move {
                 println!("Listening...");
                 let mut subscription_ids = HashMap::new();
-                let mut ended_subscriptions = vec![];
+                let mut ended_init = vec![];
                 loop {
                     if let Some(m) = read_stream.next().await {
                         if let Ok(m) = m {
@@ -64,7 +66,7 @@ impl IRCPeer {
                                         Ok(m) => {
                                             match m {
                                                 RelayMessage::Event { event, subscription_id } => {
-                                                    if !ended_subscriptions.contains(&subscription_id) {
+                                                    if !ended_init.contains(&subscription_id) {
                                                         if !subscription_ids.contains_key(&subscription_id) {
                                                             subscription_ids.insert(subscription_id.clone(), vec![]);
                                                         }
@@ -75,9 +77,11 @@ impl IRCPeer {
                                                             (*b).push(event);
                                                         }
                                                     } else {
-                                                        let response = handle_nostr_event(&event);
+                                                        let response = handle_nostr_event(&event, false, &nostr_client, &client_data).await;
 
                                                         if let Some(response) = response {
+                                                            println!("live: sending {response}");
+
                                                             let mut writer = writer.lock().await;
 
                                                             match writer.write(response.as_ref()).await {
@@ -100,10 +104,10 @@ impl IRCPeer {
                                                         b.sort_by(|a, b| a.created_at.cmp(&b.created_at));
 
                                                         for m in b.iter() {
-                                                            let response = handle_nostr_event(m);
+                                                            let response = handle_nostr_event(m, true, &nostr_client, &client_data).await;
 
                                                             if let Some(response) = response {
-                                                                println!("sending {response}");
+                                                                println!("history: sending {response}");
 
                                                                 let mut writer = writer.lock().await;
 
@@ -121,7 +125,7 @@ impl IRCPeer {
 
                                                         *b = vec![];
 
-                                                        ended_subscriptions.push(subscription_id);
+                                                        ended_init.push(subscription_id);
                                                     }
                                                 }
                                                 RelayMessage::Ok { .. } => {}
@@ -174,11 +178,6 @@ impl IRCPeer {
                     let incoming = rx.recv().await;
 
                     if let Some(msg) = incoming {
-                        match &msg {
-                            IRCMessage::NICK(nick) => client_data.write().await.set_nick(nick.clone()),
-                            _ => {}
-                        }
-
                         let response = msg.handle_message(&client_data, &nostr_client).await;
 
                         if let Some(response) = response {
@@ -213,7 +212,7 @@ impl IRCPeer {
     }
 }
 
-pub fn handle_nostr_event(event: &Box<Event>) -> Option<String> {
+pub async fn handle_nostr_event(event: &Box<Event>, is_history: bool, nostr_client: &Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>, client_data: &Arc<RwLock<IRCClientData>>) -> Option<String> {
     match event.kind {
         Kind::Base(k) => {
             match k {
@@ -225,6 +224,11 @@ pub fn handle_nostr_event(event: &Box<Event>) -> Option<String> {
                                     let channel = tag.content();
 
                                     if let Some(channel) = channel {
+                                        let p = client_data.read().await.identity.as_ref().unwrap().public_key();
+                                        if !is_history && event.pubkey == p {
+                                            return None;
+                                        }
+
                                         return Some(format!(":{} PRIVMSG #{channel} :{}", event.pubkey, event.content));
                                     }
                                 }

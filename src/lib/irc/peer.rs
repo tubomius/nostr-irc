@@ -229,7 +229,7 @@ pub async fn handle_nostr_event(event: &Box<Event>, is_history: bool, nostr_clie
                                             return None;
                                         }
 
-                                        return Some(format!(":{} PRIVMSG #{channel} :{}", event.pubkey, event.content));
+                                        return Some(format!(":{} PRIVMSG #{channel} :{}", &event.pubkey.to_string()[..16], event.content));
                                     }
                                 }
                                 _ => {}

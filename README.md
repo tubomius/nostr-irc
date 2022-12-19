@@ -16,4 +16,7 @@ Experimental code, use with caution.
 |-----------|-------------------|-----------------|-----------------------------------------------------------------------|
 | ✅         | NICK              | Metadata        | Sends nostr metadata event when you connect and/or change your nick   |
 | ✅         | PRIVMSG #channel  | Channel message | Sends nostr event 42:s for channel messages                           |
+| ✅         | JOIN #channel     | Subscribe       | Subscribes to channel messages, and gets last 200                     |
+| ❌         | PART #channel     | Unsubscribe     |                                                                       |
+| ❌         | PRIVMSG nick      | Encrypted DM?   |                                                                       |
 |-----------|-------------------|-----------------|-----------------------------------------------------------------------|

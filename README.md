@@ -7,7 +7,7 @@ Experimental code, use with caution.
 
 - Build and run main, it will listen to 127.0.0.1:6667
 - Connect with your regular IRC client, use a nostr private key as the password
-- Join a channel with /join #<pubkey>
+- Join a channel with /join #pubkey
 - Chat away
 
 # Features

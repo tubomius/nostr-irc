@@ -10,12 +10,22 @@ Experimental code, use with caution.
 - Join a channel with /join #pubkey
 - Chat away
 
-# Features
+# IRC-nostr feature mapping
 
 | Supported |  IRC              | nostr           | Description                                                           |
 |-----------|-------------------|-----------------|-----------------------------------------------------------------------|
 | ✅         | NICK              | Metadata        | Sends nostr metadata event when you connect and/or change your nick   |
 | ✅         | PRIVMSG #channel  | Channel message | Sends nostr event 42:s for channel messages                           |
-| ✅         | JOIN #channel     | Subscribe       | Subscribes to channel messages, and gets last 200                     |
-| ❌         | PART #channel     | Unsubscribe     |                                                                       |
-| ❌         | PRIVMSG nick      | Encrypted DM?   |                                                                       |
+| ✅         | JOIN #channel     | REQ             | Subscribes to channel messages, and gets last 200                     |
+| ❌         | JOIN #user        | REQ             | Should this follow as well?                                           |
+| ❌         | JOIN #thread      | REQ             |                                                                       |
+| ❌         | PART #channel     | CLOSE           |                                                                       |
+| ❌         | PRIVMSG user      | Encrypted DM?   |                                                                       |
+| ❌         | PRIVMSG #user     | Regular DM?     |                                                                       |
+| ❌         | PRIVMSG #thread   | Reply           |                                                                       |
+| ❌         | TOPIC             | Metadata        | Indicate type and name of chat, i e if it's a group/thread/user       |
+
+# Features
+
+- Support multiple relays
+- Make relay list configurable

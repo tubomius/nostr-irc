@@ -76,18 +76,21 @@ impl NostrClient {
 
     async fn check_subscriptions(&mut self, tx: &UnboundedSender<(Url, RelayMessage)>) -> Option<()> {
         let now = Instant::now();
-        let max_age = Duration::from_secs(1);
-
-        let mut remove = vec![];
+        let max_age = Duration::from_secs(20);
 
         for (_, sub) in self.subscriptions.iter_mut() {
+            if sub.done {
+                sub.data.clear();
+
+                continue;
+            }
+
             if now - sub.started > max_age {
                 if sub.responded_relays.len() == 0 {
                     // Keep waiting I guess?
                     continue;
                 }
                 sub.done = true;
-                remove.push(sub.name.clone());
 
                 let first_relay = sub.responded_relays.get(0).unwrap().clone();
 
@@ -104,13 +107,27 @@ impl NostrClient {
                 });
 
                 for msg in messages.into_iter() {
+                    let mut message_id = None;
+
+                    match &msg {
+                        RelayMessage::Event { event, .. } => message_id = Some(event.id.clone()),
+                        _ => {}
+                    }
+
+                    if let Some(message_id) = message_id {
+                        let message_id = message_id.to_string();
+                        let was_seen = self.seen_ids.contains(&message_id);
+
+                        if was_seen {
+                            continue;
+                        }
+
+                        self.seen_ids.insert(message_id);
+                    }
+
                     tx.send((first_relay.clone(), msg)).ok();
                 }
             }
-        }
-
-        for r in remove {
-            self.subscriptions.remove(&r);
         }
 
         Some(())
@@ -143,12 +160,18 @@ impl NostrClient {
             if let Some(sub) = sub {
                 if sub_ended {
                     sub.responded_relays.push(relay_url.clone());
-                } else {
-                    let message_id = message_id.unwrap();
-                    sub.data.insert(message_id, message);
-                }
 
-                return Some(());
+                    return Some(());
+                } else {
+                    let already_ended = sub.responded_relays.contains(&relay_url);
+
+                    if !already_ended {
+                        let message_id = message_id.unwrap();
+                        sub.data.insert(message_id, message);
+
+                        return Some(());
+                    }
+                }
             }
         }
 

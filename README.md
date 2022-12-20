@@ -31,5 +31,7 @@ Experimental code, use with caution.
 # Features/TODO
 
 ❌ Publish
+
 ❌ Support multiple relays
+
 ❌ Make relay list configurable

@@ -30,8 +30,8 @@ Experimental code, use with caution.
 
 # Features/TODO
 
-❌ Publish
+✅ Support multiple relays, hard-coded list for now, deduplicates messages and gives a merged stream, writes are sent to all
 
-❌ Support multiple relays
+❌ Publish
 
 ❌ Make relay list configurable

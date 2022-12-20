@@ -20,3 +20,5 @@ futures-util = "0.3.25"
 futures = { version = "0.3.25", default-features = false, features = ["async-await"] }
 serde = "1.0.151"
 serde_json = "1.0.91"
+tokio-stream = { version = "0.1.11" }
+async-stream = "0.3.3"

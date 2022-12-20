@@ -1,19 +1,8 @@
-use std::error::Error;
-use std::str::FromStr;
-use tokio::net::TcpStream;
-use std::sync::Arc;
-use futures_util::{AsyncWriteExt, SinkExt};
-use futures_util::stream::SplitSink;
-use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, Metadata, Sha256Hash, SubscriptionFilter, Tag};
+use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, Metadata, SubscriptionFilter, Tag};
 use nostr::event::{TagData, TagKind};
-use nostr_sdk::subscription::{Channel, Subscription};
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use tokio_tungstenite::tungstenite::{client, Message};
+use tokio::sync::mpsc::UnboundedSender;
 use crate::irc::client_data::ClientDataHolder;
 use crate::irc::message::IRCMessage::UNKNOWN;
-use crate::irc::peer::IRCPeer;
 
 #[derive(Debug, Clone)]
 pub enum IRCMessage {
@@ -88,26 +77,26 @@ impl IRCMessage {
         }
     }
 
-    pub async fn handle_message(&self, client_data: &ClientDataHolder, nostr_client: &Arc<Mutex<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>>) -> Option<String> {
+    pub async fn handle_message(&self, client_data: &ClientDataHolder, nostr_tx: &UnboundedSender<ClientMessage>) -> Option<Option<String>> {
         match self {
             Self::CAP(s, _) => {
                 if s == "LS" {
-                    Some(format!("CAP * LS"))
+                    Some(Some(format!("CAP * LS")))
                 } else {
                     let nick = client_data.read().await.get_nick();
                     let private_key = client_data.read().await.get_private_key();
 
                     if !private_key.is_none() {
                         if let Some(nick) = nick {
-                            return Some(format!("001 {nick} :Welcome to the Internet Relay Network"))
+                            return Some(Some(format!("001 {nick} :Welcome to the Internet Relay Network")))
                         }
                     }
 
-                    Some(format!("ERROR :No nick or no private key, set password to your private key"))
+                    Some(Some(format!("ERROR :No nick or no private key, set password to your private key")))
                 }
             },
             Self::QUIT(_) => {
-                Some(format!("QUIT"))
+                Some(Some(format!("QUIT")))
             }
             Self::LIST() => {
                 let channel_list = ClientMessage::new_req(
@@ -116,13 +105,11 @@ impl IRCMessage {
                         SubscriptionFilter::new()
                             .kind(Kind::Base(KindBase::ChannelCreation))
                     ],
-                ).to_json();
+                );
 
-                println!("join channel: list: {channel_list}");
+                nostr_tx.send(channel_list).ok();
 
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_list)).await.expect("Impossible to list channels");
-
-                None
+                Some(None)
             }
             Self::JOIN(channel) => {
                 let channels = channel.split(",");
@@ -133,27 +120,21 @@ impl IRCMessage {
                     let channel_info = ClientMessage::new_req(
                         format!("{channel}-info"),
                         vec![SubscriptionFilter::new().id(channel)],
-                    ).to_json();
+                    );
 
-                    println!("join channel: info: {channel_info}");
-
-                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_info)).await.expect("Impossible to send message");
+                    nostr_tx.send(channel_info).ok();
 
                     let channel_messages = ClientMessage::new_req(
                         format!("{channel}-messages"),
                         vec![SubscriptionFilter::new().kind(Kind::Base(KindBase::ChannelMessage)).limit(200).event(channel.parse().unwrap())],
-                    ).to_json();
+                    );
 
-                    println!("join channel: messages: {channel_messages}");
-
-                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(channel_messages)).await.expect("Impossible to send message");
+                    nostr_tx.send(channel_messages).ok();
                 }
 
-                None
+                Some(None)
             }
             Self::PRIVMSG(channel, message) => {
-                println!("nostr: send channel message");
-
                 let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
 
                 let channel = channel.split_once("#").unwrap().1;
@@ -167,17 +148,15 @@ impl IRCMessage {
                     ))],
                 ).to_event(&my_keys).unwrap();
 
-                let msg = ClientMessage::new_event(event).to_json();
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
+                let msg = ClientMessage::new_event(event);
+                nostr_tx.send(msg).ok();
 
-                println!("nostr: channel message sent");
-
-                None
+                Some(None)
             }
             Self::PASS(s) => {
                 client_data.write().await.set_private_key(s.clone());
 
-                None
+                Some(None)
             }
             Self::NICK(s) => {
                 let old_nick = client_data.read().await.get_nick().clone();
@@ -193,21 +172,15 @@ impl IRCMessage {
 
                     let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
 
-                    println!("nostr: send msg");
+                    let msg = ClientMessage::new_event(event);
+                    nostr_tx.send(msg).ok();
 
-                    let msg = ClientMessage::new_event(event).to_json();
-                    nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
-
-                    println!("nostr: metadata sent");
-
-                    Some(format!(":{old_nick} NICK {s}"))
+                    Some(Some(format!(":{old_nick} NICK {s}")))
                 } else {
-                    None
+                    Some(None)
                 }
             }
             Self::USER(_, _, _, _) => {
-                println!("nostr: set metadata");
-
                 let metadata = Metadata::new()
                     .name(client_data.read().await.get_nick().unwrap())
                     .display_name(client_data.read().await.get_nick().unwrap())
@@ -217,16 +190,12 @@ impl IRCMessage {
 
                 let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
 
-                println!("nostr: send msg");
+                let msg = ClientMessage::new_event(event);
+                nostr_tx.send(msg).ok();
 
-                let msg = ClientMessage::new_event(event).to_json();
-                nostr_client.lock().await.send(tokio_tungstenite::tungstenite::Message::Text(msg)).await.expect("Impossible to send message");
-
-                println!("nostr: metadata sent");
-
-                None
+                Some(None)
             }
-            _ => None,
+            _ => Some(None),
         }
     }
 }

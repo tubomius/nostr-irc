@@ -1,13 +1,7 @@
-use std::error::Error;
 use std::str::FromStr;
 use std::sync::Arc;
 use nostr::Keys;
-use tokio::net::TcpStream;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::sync::{mpsc, RwLock};
-use tokio::sync::mpsc::error::SendError;
-use tokio::task::JoinSet;
-use crate::irc::message::IRCMessage;
+use tokio::sync::RwLock;
 
 pub type ClientDataHolder = Arc<RwLock<IRCClientData>>;
 

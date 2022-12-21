@@ -1,9 +1,5 @@
 use std::str::FromStr;
-use std::sync::Arc;
 use nostr::Keys;
-use tokio::sync::RwLock;
-
-pub type ClientDataHolder = Arc<RwLock<IRCClientData>>;
 
 pub struct IRCClientData {
     nick: Option<String>,

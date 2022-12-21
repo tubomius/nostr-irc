@@ -3,7 +3,7 @@ use std::error::Error;
 use nostr::url::Url;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, RelayMessage, SubscriptionFilter};
 use nostr::event::{TagKind};
@@ -11,12 +11,12 @@ use nostr::hashes::hex::ToHex;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::mpsc::{UnboundedSender};
 use crate::irc::channel::{IRCChannel};
-use crate::irc::client_data::{ClientDataHolder, IRCClientData};
+use crate::irc::client_data::IRCClientData;
 use crate::irc::message::IRCMessage;
 use crate::nostr::client::NostrClient;
 
 pub struct IRCPeer {
-    client_data: ClientDataHolder,
+    client_data: IRCClientData,
     channels: HashMap<String, IRCChannel>,
     set: JoinSet<()>,
 }
@@ -24,7 +24,7 @@ pub struct IRCPeer {
 impl IRCPeer {
     pub fn new() -> Self {
         Self {
-            client_data: ClientDataHolder::new(RwLock::new(IRCClientData::new())),
+            client_data: IRCClientData::new(),
             channels: HashMap::new(),
             set: JoinSet::new(),
         }
@@ -69,7 +69,15 @@ impl IRCPeer {
                     Kind::Base(k) => {
                         match k {
                             KindBase::ChannelMetadata => {
-                                // println!("ChannelMetadata {event:?}");
+                                // println!("handle_nostr_message: ChannelMetadata: {event:?}");
+
+                                let channel = event.id.to_hex();
+
+                                self.get_or_add_channel(channel.to_string());
+
+                                let channel = self.channels.get_mut(&channel).unwrap();
+
+                                channel.handle_nostr_channel_metadata(message, writer, nostr_tx, &self.client_data).await;
                             },
                             KindBase::ChannelMessage => {
                                 for tag in &event.tags {
@@ -150,8 +158,8 @@ impl IRCPeer {
                 if s == "LS" {
                     Some(Some(format!("CAP * LS")))
                 } else {
-                    let nick = self.client_data.read().await.get_nick();
-                    let private_key = self.client_data.read().await.get_private_key();
+                    let nick = self.client_data.get_nick();
+                    let private_key = self.client_data.get_private_key();
 
                     if !private_key.is_none() {
                         if let Some(nick) = nick {
@@ -222,7 +230,7 @@ impl IRCPeer {
             IRCMessage::PRIVMSG(channel, message) => {
                 println!("PRIVMSG {channel} {message}");
 
-                let my_keys = self.client_data.read().await.identity.as_ref().unwrap().clone();
+                let my_keys = self.client_data.identity.as_ref().unwrap().clone();
 
                 if channel.contains("#") {
                     let channel = channel.split_once("#").unwrap().1;
@@ -241,20 +249,20 @@ impl IRCPeer {
                 Some(None)
             }
             IRCMessage::PASS(s) => {
-                self.client_data.write().await.set_private_key(s.clone());
+                self.client_data.set_private_key(s.clone());
 
                 Some(None)
             }
             IRCMessage::NICK(s) => {
-                let old_nick = self.client_data.read().await.get_nick().clone();
+                let old_nick = self.client_data.get_nick().clone();
 
-                self.client_data.write().await.set_nick(s.clone());
+                self.client_data.set_nick(s.clone());
 
                 if let Some(old_nick) = old_nick {
                     let metadata = nostr::Metadata::new()
                         .name(&s);
 
-                    let my_keys = self.client_data.read().await.identity.as_ref().unwrap().clone();
+                    let my_keys = self.client_data.identity.as_ref().unwrap().clone();
 
                     let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
 
@@ -268,10 +276,10 @@ impl IRCPeer {
             }
             IRCMessage::USER(_, _, _, _) => {
                 let metadata = nostr::Metadata::new()
-                    .name(self.client_data.read().await.get_nick().unwrap())
+                    .name(self.client_data.get_nick().unwrap())
                     .about("description wat");
 
-                let my_keys = self.client_data.read().await.identity.as_ref().unwrap().clone();
+                let my_keys = self.client_data.identity.as_ref().unwrap().clone();
 
                 let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
 

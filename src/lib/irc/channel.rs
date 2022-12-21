@@ -6,7 +6,7 @@ use nostr::event::{TagData, TagKind};
 use tokio::io::AsyncWriteExt;
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::sync::mpsc::UnboundedSender;
-use crate::irc::client_data::ClientDataHolder;
+use crate::irc::client_data::IRCClientData;
 use crate::nostr::metadata::Metadata;
 
 pub enum IRCChannelMessage {
@@ -42,7 +42,7 @@ impl IRCChannel {
         }
     }
 
-    pub async fn handle_nostr_metadata(&mut self, message: &RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &ClientDataHolder) {
+    pub async fn handle_nostr_metadata(&mut self, message: &RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &IRCClientData) {
         match message {
             RelayMessage::Event { event, .. } => {
                 let user_id = event.pubkey.to_string();
@@ -109,7 +109,7 @@ impl IRCChannel {
         }
     }
 
-    pub async fn check_if_warmup_done(&mut self, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &ClientDataHolder) {
+    pub async fn check_if_warmup_done(&mut self, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &IRCClientData) {
         // println!("#{}: check_if_warmup_done: {} {} {}", self.id, self.got_metadata, self.got_messages, self.got_nicks);
 
         if self.got_metadata && self.got_messages && self.got_nicks {
@@ -140,9 +140,24 @@ impl IRCChannel {
     }
 
     #[async_recursion]
-    pub async fn handle_nostr_channel_message(&mut self, message: RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &ClientDataHolder, is_history: bool) {
+    pub async fn handle_nostr_channel_message(&mut self, message: RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &IRCClientData, is_history: bool) {
         match &message {
             RelayMessage::Event { event, .. } => {
+                for t in &event.tags {
+                    if let Ok(tt) = t.kind() {
+                        match tt {
+                            TagKind::P => {
+                                // println!("nostr_channel_message: P: {:?}", t.as_vec());
+                            }
+                            TagKind::E => {
+                                // println!("nostr_channel_message: E: {:?}", t.as_vec());
+                            }
+                            TagKind::Nonce => {}
+                            TagKind::Delegation => {}
+                        }
+                    }
+                }
+
                 let user_id = event.pubkey.to_string();
 
                 let nick = self.nicknames.get(&user_id);
@@ -161,7 +176,7 @@ impl IRCChannel {
 
                     nostr_tx.send(user_metadata_close).ok();
 
-                    let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
+                    let my_pubkey = client_data.identity.as_ref().unwrap().public_key().to_string();
 
                     if user_id != my_pubkey {
                         writer.write(
@@ -198,7 +213,7 @@ impl IRCChannel {
 
                 if !is_history {
                     // Don't send our own messages since these are displayed by the IRC client
-                    let our_nick = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
+                    let our_nick = client_data.identity.as_ref().unwrap().public_key().to_string();
                     if cur_nick == our_nick {
                         return;
                     }
@@ -221,12 +236,30 @@ impl IRCChannel {
             _ => return,
         }
     }
+    pub async fn handle_nostr_channel_metadata(&mut self, _message: RelayMessage, _writer: &mut OwnedWriteHalf, _nostr_tx: &UnboundedSender<ClientMessage>, _client_data: &IRCClientData) {
+        // @todo haven't seen this used anywhere, maybe implement later
+    }
 
-    pub async fn handle_nostr_channel_creation(&mut self, message: RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &ClientDataHolder) {
+    pub async fn handle_nostr_channel_creation(&mut self, message: RelayMessage, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &IRCClientData) {
         let event = match message {
             RelayMessage::Event { event, .. } => event,
             _ => return,
         };
+
+        for t in &event.tags {
+            if let Ok(tt) = t.kind() {
+                match tt {
+                    TagKind::P => {
+                        // println!("nostr_channel_creation: P: {:?}", t.as_vec());
+                    }
+                    TagKind::E => {
+                        // println!("nostr_channel_creation: E: {:?}", t.as_vec());
+                    }
+                    TagKind::Nonce => {}
+                    TagKind::Delegation => {}
+                }
+            }
+        }
 
         let metadata = serde_json::from_slice::<Metadata>(event.content.as_ref()).unwrap();
 
@@ -261,7 +294,7 @@ impl IRCChannel {
         Some(())
     }
 
-    pub async fn join(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &ClientDataHolder) -> Option<()> {
+    pub async fn join(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &IRCClientData) -> Option<()> {
         self.warming_up = true;
 
         let channel_info = ClientMessage::new_req(
@@ -278,8 +311,8 @@ impl IRCChannel {
 
         nostr_tx.send(channel_messages).ok();
 
-        let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
-        let my_nick = client_data.read().await.get_nick().unwrap_or(my_pubkey);
+        let my_pubkey = client_data.identity.as_ref().unwrap().public_key().to_string();
+        let my_nick = client_data.get_nick().unwrap_or(my_pubkey);
 
         writer.write(
             format!(
@@ -312,7 +345,7 @@ impl IRCChannel {
         Some(())
     }
 
-    pub async fn part(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &ClientDataHolder) -> Option<()> {
+    pub async fn part(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &IRCClientData) -> Option<()> {
         let channel_info = ClientMessage::close(format!("{}-info", self.id));
 
         nostr_tx.send(channel_info).ok();
@@ -321,8 +354,8 @@ impl IRCChannel {
 
         nostr_tx.send(channel_messages).ok();
 
-        let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
-        let my_nick = client_data.read().await.get_nick().unwrap_or(my_pubkey);
+        let my_pubkey = client_data.identity.as_ref().unwrap().public_key().to_string();
+        let my_nick = client_data.get_nick().unwrap_or(my_pubkey);
 
         writer.write(
             format!(

@@ -29,10 +29,14 @@ impl IRCServer {
             "wss://nostr-01.bolt.observer".to_string(),
             "wss://relay.r3d.red".to_string(),
             "wss://nostr.slothy.win".to_string(),
-            "wss://nostr-relay.untethr.me/".to_string(),
+            "wss://nostr-relay.untethr.me".to_string(),
             "wss://nostr-pub.wellorder.net".to_string(),
             "wss://nostr.bitcoiner.social".to_string(),
             "wss://nostr.onsats.org".to_string(),
+            "wss://relayer.fiatjaf.com".to_string(),
+            "wss://nostr-2.zebedee.cloud".to_string(),
+            "wss://expensive-relay.fiatjaf.com".to_string(),
+            "wss://nostr.zebedee.cloud".to_string(),
         ];
 
         let listener = TcpListener::bind(&addr).await?;

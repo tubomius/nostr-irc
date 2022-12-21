@@ -29,6 +29,8 @@ Experimental code, use with caution.
 
 ✅ Support multiple relays, hard-coded list for now, deduplicates messages and gives a merged stream, writes are sent to all
 
+❌ Support NIP-19 with embedded relay recommendations as #channelkey, and add recommended relays
+
 ❌ Publish
 
 ❌ Make relay list configurable

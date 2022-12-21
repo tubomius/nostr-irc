@@ -29,7 +29,7 @@ pub struct IRCChannel {
 
 impl IRCChannel {
     pub fn new(id: String) -> Self {
-        println!("new channel {id}");
+        println!("#{id}: new channel");
 
         Self {
             id,
@@ -110,10 +110,10 @@ impl IRCChannel {
     }
 
     pub async fn check_if_warmup_done(&mut self, writer: &mut OwnedWriteHalf, nostr_tx: &UnboundedSender<ClientMessage>, client_data: &ClientDataHolder) {
-        println!("{}: check_if_warmup_done: {} {} {}", self.id, self.got_metadata, self.got_messages, self.got_nicks);
+        // println!("#{}: check_if_warmup_done: {} {} {}", self.id, self.got_metadata, self.got_messages, self.got_nicks);
 
         if self.got_metadata && self.got_messages && self.got_nicks {
-            println!("{}: warmup done, {} messages, {} nicks", self.id, self.warm_up_events.len(), self.nicknames.len());
+            println!("#{}: channel warmup done, {} messages, {} nicks", self.id, self.warm_up_events.len(), self.nicknames.len());
 
             self.warming_up = false;
 

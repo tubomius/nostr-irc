@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 use async_recursion::async_recursion;
 use nostr::{ClientMessage, Event, EventBuilder, Keys, Kind, KindBase, RelayMessage, SubscriptionFilter, Tag};
 use nostr::event::{TagData, TagKind};

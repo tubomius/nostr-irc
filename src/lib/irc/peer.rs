@@ -1,21 +1,19 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
 use nostr::url::Url;
 use tokio::net::TcpStream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinSet;
-use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, RelayMessage, SubscriptionFilter, Tag};
-use nostr::event::{TagData, TagKind};
+use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, RelayMessage, SubscriptionFilter};
+use nostr::event::{TagKind};
 use nostr::hashes::hex::ToHex;
 use tokio::net::tcp::OwnedWriteHalf;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use crate::irc::channel::{IRCChannel, IRCChannelHolder, IRCChannelMessage};
+use tokio::sync::mpsc::{UnboundedSender};
+use crate::irc::channel::{IRCChannel};
 use crate::irc::client_data::{ClientDataHolder, IRCClientData};
 use crate::irc::message::IRCMessage;
 use crate::nostr::client::NostrClient;
-use crate::nostr::metadata::Metadata;
 
 pub struct IRCPeer {
     client_data: ClientDataHolder,
@@ -309,7 +307,7 @@ impl IRCPeer {
     pub fn get_or_add_channel(&mut self, channel_id: String) {
         let channels = &mut self.channels;
 
-        if let Some(irc_channel) = channels.get_mut(&channel_id) {
+        if let Some(_) = channels.get_mut(&channel_id) {
             return;
         }
 

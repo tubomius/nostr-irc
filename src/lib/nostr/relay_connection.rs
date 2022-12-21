@@ -68,7 +68,7 @@ impl NostrRelayConnection {
 
                 tx.send(RelayMessage::from_json(&*text)?).map_err(|e| e.into())
             }
-            Message::Ping(s) => {
+            Message::Ping(_) => {
                 println!("ping");
 
                 Ok(())

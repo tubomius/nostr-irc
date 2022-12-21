@@ -161,12 +161,16 @@ impl IRCChannel {
 
                     nostr_tx.send(user_metadata_close).ok();
 
-                    writer.write(
-                        format!(
-                            ":{user_id} JOIN #{}\r\n",
-                            self.id,
-                        ).as_ref()
-                    ).await.ok();
+                    let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
+
+                    if user_id != my_pubkey {
+                        writer.write(
+                            format!(
+                                ":{user_id} JOIN #{}\r\n",
+                                self.id,
+                            ).as_ref()
+                        ).await.ok();
+                    }
                 }
             }
             _ => {},
@@ -308,7 +312,7 @@ impl IRCChannel {
         Some(())
     }
 
-    pub async fn part(&mut self, nostr_tx: &UnboundedSender<ClientMessage>) -> Option<()> {
+    pub async fn part(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &ClientDataHolder) -> Option<()> {
         let channel_info = ClientMessage::close(format!("{}-info", self.id));
 
         nostr_tx.send(channel_info).ok();
@@ -316,6 +320,16 @@ impl IRCChannel {
         let channel_messages = ClientMessage::close(format!("{}-messages", self.id));
 
         nostr_tx.send(channel_messages).ok();
+
+        let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
+        let my_nick = client_data.read().await.get_nick().unwrap_or(my_pubkey);
+
+        writer.write(
+            format!(
+                ":{my_nick} PART #{}\r\n",
+                self.id,
+            ).as_ref()
+        ).await.ok();
 
         Some(())
     }

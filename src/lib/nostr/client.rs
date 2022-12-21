@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 use nostr::{ClientMessage, RelayMessage};
@@ -14,7 +14,6 @@ use crate::nostr::subscription::NostrSubscription;
 pub struct NostrClient {
     relays: Vec<Url>,
     subscriptions: HashMap<String, NostrSubscription>,
-    seen_ids: HashSet<String>,
 }
 
 impl NostrClient {
@@ -22,7 +21,6 @@ impl NostrClient {
         Self {
             relays: relays.into_iter().map(|r| r.parse().unwrap()).collect(),
             subscriptions: HashMap::new(),
-            seen_ids: HashSet::new(),
         }
     }
 
@@ -114,13 +112,13 @@ impl NostrClient {
 
                         if let Some(message_id) = message_id {
                             let message_id = message_id.to_string();
-                            let was_seen = self.seen_ids.contains(&message_id);
+                            let was_seen = sub.seen_ids.contains(&message_id);
 
                             if was_seen {
                                 continue;
                             }
 
-                            self.seen_ids.insert(message_id);
+                            sub.seen_ids.insert(message_id);
                         }
 
                         tx.send((first_relay.clone(), msg)).ok();
@@ -179,18 +177,18 @@ impl NostrClient {
                         return Some(());
                     }
                 }
+
+                if let Some(message_id) = message_id {
+                    let message_id = message_id.to_string();
+                    let was_seen = sub.seen_ids.contains(&message_id);
+
+                    if was_seen {
+                        return Some(());
+                    }
+
+                    sub.seen_ids.insert(message_id);
+                }
             }
-        }
-
-        if let Some(message_id) = message_id {
-            let message_id = message_id.to_string();
-            let was_seen = self.seen_ids.contains(&message_id);
-
-            if was_seen {
-                return Some(());
-            }
-
-            self.seen_ids.insert(message_id);
         }
 
         if sub_ended {

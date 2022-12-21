@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use nostr::{RelayMessage, Sha256Hash};
 use nostr::url::Url;
@@ -11,6 +11,7 @@ pub struct NostrSubscription {
     pub started: Instant,
     pub done: bool,
     pub end_of_stored_events_message: Option<RelayMessage>,
+    pub seen_ids: HashSet<String>,
 }
 
 impl NostrSubscription {
@@ -23,6 +24,7 @@ impl NostrSubscription {
             started: Instant::now(),
             done: false,
             end_of_stored_events_message: None,
+            seen_ids: HashSet::new(),
         }
     }
 }

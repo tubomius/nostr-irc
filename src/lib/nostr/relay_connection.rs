@@ -51,7 +51,7 @@ impl NostrRelayConnection {
             println!("NostrRelayConnection: disconnected: {relay_url}");
 
             // Reconnect?
-            tokio::time::sleep(Duration::from_secs(1_000_000)).await;
+            tokio::time::sleep(Duration::from_secs(10_000)).await;
         }
     }
 
@@ -67,6 +67,11 @@ impl NostrRelayConnection {
                 // println!("NostrRelayConnection: handle_relay_message: {text}");
 
                 tx.send(RelayMessage::from_json(&*text)?).map_err(|e| e.into())
+            }
+            Message::Ping(s) => {
+                println!("ping");
+
+                Ok(())
             }
             _ => Ok(()),
         }

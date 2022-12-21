@@ -52,26 +52,26 @@ impl IRCChannel {
 
                 let user = self.nicknames.get_mut(&user_id);
 
-                let new_nick = metadata.name.unwrap_or(user_id).chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+                let new_nick = metadata.name.unwrap_or(user_id.clone()).chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+
+                println!("{}: metadata: new nick {new_nick}", event.pubkey.to_string());
 
                 if let Some(user) = user {
                     if !self.got_nicks {
                         *user = Some(new_nick);
                     } else {
-                        if let Some(user) = user {
-                            // Changed nick
-                            let old_nick = user.clone();
-                            if old_nick != new_nick {
-                                writer.write(
-                                    format!(
-                                        ":{old_nick} NICK :{new_nick}\r\n",
-                                    ).as_ref()
-                                ).await.ok();
+                        let old_nick = user.as_ref().unwrap_or(&user_id);
+                        // Changed nick
+                        if old_nick != &new_nick {
+                            println!("{}: metadata: send NICK", event.pubkey.to_string());
 
-                                *user = new_nick;
-                            }
-                        } else {
+                            writer.write(
+                                format!(
+                                    ":{old_nick} NICK :{new_nick}\r\n",
+                                ).as_ref()
+                            ).await.ok();
 
+                            *user = Some(new_nick);
                         }
                     }
                 }
@@ -124,6 +124,16 @@ impl IRCChannel {
                 messages.push(m);
             }
 
+            for (user_id, nick) in self.nicknames.iter() {
+                let nick = nick.as_ref().unwrap_or(user_id);
+                writer.write(
+                    format!(
+                        ":{nick} JOIN #{}\r\n",
+                        self.id,
+                    ).as_ref()
+                ).await.ok();
+            }
+
             for m in messages {
                 self.handle_nostr_channel_message(m, writer, nostr_tx, &client_data, true).await;
             }
@@ -151,6 +161,13 @@ impl IRCChannel {
                     let user_metadata_close = ClientMessage::close(format!("{}-user-metadata", user_id));
 
                     nostr_tx.send(user_metadata_close).ok();
+
+                    writer.write(
+                        format!(
+                            ":{user_id} JOIN #{}\r\n",
+                            self.id,
+                        ).as_ref()
+                    ).await.ok();
                 }
             }
             _ => {},
@@ -241,7 +258,7 @@ impl IRCChannel {
         Some(())
     }
 
-    pub async fn join(&mut self, nostr_tx: &UnboundedSender<ClientMessage>) -> Option<()> {
+    pub async fn join(&mut self, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf, client_data: &ClientDataHolder) -> Option<()> {
         self.warming_up = true;
 
         let channel_info = ClientMessage::new_req(
@@ -257,6 +274,37 @@ impl IRCChannel {
         );
 
         nostr_tx.send(channel_messages).ok();
+
+        let my_pubkey = client_data.read().await.identity.as_ref().unwrap().public_key().to_string();
+        let my_nick = client_data.read().await.get_nick().unwrap_or(my_pubkey);
+
+        writer.write(
+            format!(
+                ":{my_nick} JOIN #{}\r\n",
+                self.id,
+            ).as_ref()
+        ).await.ok();
+
+        writer.write(
+            format!(
+                "332 {my_nick} #{} :Channel is loading...\r\n",
+                self.id,
+            ).as_ref()
+        ).await.ok();
+
+        writer.write(
+            format!(
+                "353 {my_nick} = #{} :{my_nick}\r\n",
+                self.id,
+            ).as_ref()
+        ).await.ok();
+
+        writer.write(
+            format!(
+                "366 {my_nick} = #{} :End of NAMES list\r\n",
+                self.id,
+            ).as_ref()
+        ).await.ok();
 
         Some(())
     }

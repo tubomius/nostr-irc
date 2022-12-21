@@ -143,6 +143,8 @@ impl IRCPeer {
     }
 
     pub async fn handle_message(&mut self, msg: String, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf) -> Option<()> {
+        println!("irc client sent: {msg}");
+
         let msg = IRCMessage::from_string(msg);
 
         let response = match msg {
@@ -166,6 +168,9 @@ impl IRCPeer {
             },
             IRCMessage::QUIT(_) => {
                 Some(Some(format!("QUIT")))
+            }
+            IRCMessage::WHO(_) => {
+                Some(None)
             }
             IRCMessage::LIST() => {
                 let channel_list = ClientMessage::new_req(
@@ -192,7 +197,7 @@ impl IRCPeer {
                         self.channels.get_mut(channel).unwrap()
                     };
 
-                    irc_channel.join(&nostr_tx).await;
+                    irc_channel.join(&nostr_tx, writer, &self.client_data).await;
                 }
 
                 Some(None)
@@ -210,6 +215,8 @@ impl IRCPeer {
                     };
 
                     irc_channel.part(&nostr_tx).await;
+
+                    self.channels.remove(channel);
                 }
 
                 Some(None)

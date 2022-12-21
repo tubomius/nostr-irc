@@ -5,6 +5,7 @@ pub enum IRCMessage {
     CAP(String, Option<i32>),
     NICK(String),
     QUIT(String),
+    WHO(String),
     PASS(String),
     JOIN(String),
     PART(String),

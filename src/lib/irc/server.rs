@@ -19,6 +19,16 @@ impl IRCServer {
             "wss://nostr.rocks".to_string(),
             "wss://no.str.cr".to_string(),
             "wss://relay.damus.io".to_string(),
+            "wss://nostr-pub.semisol.dev".to_string(),
+            "wss://relay.nostrmoto.xyz".to_string(),
+            "wss://relay.nostr.info".to_string(),
+            "wss://nostr.zerofeerouting.com".to_string(),
+            "wss://nostr.hyperlingo.com".to_string(),
+            "wss://nostr.sandwich.farm".to_string(),
+            "wss://nostr.shadownode.org".to_string(),
+            "wss://nostr-01.bolt.observer".to_string(),
+            "wss://relay.r3d.red".to_string(),
+            "wss://nostr.slothy.win".to_string(),
         ];
 
         let listener = TcpListener::bind(&addr).await?;

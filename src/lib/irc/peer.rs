@@ -212,7 +212,7 @@ impl IRCPeer {
                         self.channels.get_mut(channel).unwrap()
                     };
 
-                    irc_channel.part(&nostr_tx).await;
+                    irc_channel.part(&nostr_tx, writer, &self.client_data).await;
 
                     self.channels.remove(channel);
                 }

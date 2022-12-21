@@ -205,16 +205,21 @@ impl NostrClient {
 
         let mut subscription = None;
 
+        let mut close = false;
+
         match &message {
             ClientMessage::Event { .. } => {}
             ClientMessage::Req { subscription_id, .. } => subscription = Some(subscription_id.clone()),
-            ClientMessage::Close { .. } => {}
+            ClientMessage::Close { subscription_id } => {
+                close = true;
+                subscription = Some(subscription_id.clone());
+            },
         }
 
         let json = message.to_json();
 
         if let Some(subscription_id) = &subscription {
-            if !self.subscriptions.contains_key(subscription_id) {
+            if !close && !self.subscriptions.contains_key(subscription_id) {
                 // println!("started subscription: {subscription_id}");
 
                 self.subscriptions.insert(subscription_id.clone(), NostrSubscription::new(subscription_id.clone()));
@@ -231,6 +236,14 @@ impl NostrClient {
                         Err(_) => {}
                     }
                 }
+            } else if close {
+                for (_, tx) in client_messages_txs.iter() {
+                    match tx.send(json.clone()) {
+                        Ok(_) => {}
+                        Err(_) => {}
+                    }
+                }
+                self.subscriptions.remove(subscription_id);
             }
         } else {
             // Probably write, send to all relays

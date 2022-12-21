@@ -6,27 +6,24 @@ Experimental code, use with caution.
 # Running
 
 - Build and run main, it will listen to 127.0.0.1:6667
+- It will send metadata to change your name to the chosen IRC nick when you connect, so use a throwaway private key for now or else metadata may be overwritten because reasons
 - Connect with your regular IRC client, use a nostr private key as the password
-- Join a channel with /join #pubkey
+- Join a channel with /join #channelkey
 - Chat away
 
 # IRC-nostr feature mapping
 
-| Supported |  IRC                | nostr           | Description                                                           |
-|-----------|---------------------|-----------------|-----------------------------------------------------------------------|
-| ✅         | NICK                | Metadata        | Sends nostr metadata event when you connect and/or change your nick   |
-| ✅         | PRIVMSG #channelkey | Channel message | Sends nostr event 42:s for channel messages                           |
-| ✅         | JOIN #channelkey    | REQ             | Subscribes to channel messages, and gets last 200                     |
-| ❌         | JOIN #userkey       | REQ             | Should this follow as well?                                           |
-| ❌         | JOIN #threadkey     | REQ             |                                                                       |
-| ❌         | PART #key           | CLOSE           |                                                                       |
-| ❌         | PRIVMSG userkey     | Encrypted DM?   |                                                                       |
-| ❌         | PRIVMSG #userkey    | Regular DM?     |                                                                       |
-| ❌         | PRIVMSG #threadkey  | Reply           |                                                                       |
-| ❌         | TOPIC               | Metadata        | Indicate type and name of chat, i e if it's a group/thread/user       |
-| ❌         | JOIN #string        | Channel create  | Create channel and join #channelkey instead                           |
-| ❌         | JOIN #home          | REQ followed    | Subscribe to followed users, and get last 200                         |
-| ❌         | PRIVMSG #home       | Note?           |                                                                       |
+| Supported | IRC                 | nostr           | Description                                                         |
+|-----------|---------------------|-----------------|---------------------------------------------------------------------|
+| ✅         | NICK                | Metadata        | Sends nostr metadata event when you connect and/or change your nick |
+| ✅         | NICK                | Metadata        | Syncs metadata of users seen in channel and renames them if needed  |
+| ✅         | PRIVMSG #channelkey | Channel message | Sends nostr event 42:s for channel messages                         |
+| ✅         | JOIN #channelkey    | REQ             | Subscribes to channel messages, and gets last 200                   |
+| ✅         | JOIN                | REQ             | Sends a JOIN for users that were seen                               |
+| ✅         | TOPIC               | Metadata        | Gets topic from channel metadata name                               |
+| ❌         | PART #key           | CLOSE           | Closes subscriptions but not informing IRC client yet               |
+| ❌         | PRIVMSG userkey     | Encrypted DM?   |                                                                     |
+| ❌         | JOIN #string        | Channel create  | Create channel with that name and join #channelkey instead          |
 
 # Features/TODO
 

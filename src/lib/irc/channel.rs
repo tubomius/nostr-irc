@@ -53,7 +53,7 @@ impl IRCChannel {
 
                 let new_nick = metadata.name.unwrap_or(user_id.clone()).chars().filter(|c| c.is_ascii_alphanumeric()).collect();
 
-                println!("{}: metadata: new nick {new_nick}", event.pubkey.to_string());
+                // println!("{}: metadata: new nick {new_nick}", event.pubkey.to_string());
 
                 if let Some(user) = user {
                     if !self.got_nicks {
@@ -62,7 +62,7 @@ impl IRCChannel {
                         let old_nick = user.as_ref().unwrap_or(&user_id);
                         // Changed nick
                         if old_nick != &new_nick {
-                            println!("{}: metadata: send NICK", event.pubkey.to_string());
+                            // println!("{}: metadata: send NICK", event.pubkey.to_string());
 
                             writer.write(
                                 format!(

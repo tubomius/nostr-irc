@@ -10,6 +10,7 @@ pub struct NostrSubscription {
     pub responded_relays: Vec<Url>,
     pub started: Instant,
     pub done: bool,
+    pub end_of_stored_events_message: Option<RelayMessage>,
 }
 
 impl NostrSubscription {
@@ -21,6 +22,7 @@ impl NostrSubscription {
             responded_relays: vec![],
             started: Instant::now(),
             done: false,
+            end_of_stored_events_message: None,
         }
     }
 }

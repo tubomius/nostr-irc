@@ -76,7 +76,7 @@ impl NostrClient {
 
     async fn check_subscriptions(&mut self, tx: &UnboundedSender<(Url, RelayMessage)>) -> Option<()> {
         let now = Instant::now();
-        let max_age = Duration::from_secs(20);
+        let max_age = Duration::from_secs(5);
 
         for (_, sub) in self.subscriptions.iter_mut() {
             if sub.done {
@@ -86,13 +86,9 @@ impl NostrClient {
             }
 
             if now - sub.started > max_age {
-                if sub.responded_relays.len() == 0 {
-                    // Keep waiting I guess?
-                    continue;
-                }
                 sub.done = true;
 
-                let first_relay = sub.responded_relays.get(0).unwrap().clone();
+                // println!("subscription initial events ended: {}", sub.name);
 
                 let mut messages = sub.data.drain().map(|(_, y)| y).collect::<Vec<_>>();
 
@@ -106,26 +102,35 @@ impl NostrClient {
                     Ordering::Equal
                 });
 
-                for msg in messages.into_iter() {
-                    let mut message_id = None;
+                if sub.responded_relays.len() > 0 {
+                    let first_relay = sub.responded_relays.get(0).unwrap().clone();
+                    for msg in messages.into_iter() {
+                        let mut message_id = None;
 
-                    match &msg {
-                        RelayMessage::Event { event, .. } => message_id = Some(event.id.clone()),
-                        _ => {}
-                    }
-
-                    if let Some(message_id) = message_id {
-                        let message_id = message_id.to_string();
-                        let was_seen = self.seen_ids.contains(&message_id);
-
-                        if was_seen {
-                            continue;
+                        match &msg {
+                            RelayMessage::Event { event, .. } => message_id = Some(event.id.clone()),
+                            _ => {}
                         }
 
-                        self.seen_ids.insert(message_id);
-                    }
+                        if let Some(message_id) = message_id {
+                            let message_id = message_id.to_string();
+                            let was_seen = self.seen_ids.contains(&message_id);
 
-                    tx.send((first_relay.clone(), msg)).ok();
+                            if was_seen {
+                                continue;
+                            }
+
+                            self.seen_ids.insert(message_id);
+                        }
+
+                        tx.send((first_relay.clone(), msg)).ok();
+                    }
+                }
+                if sub.end_of_stored_events_message.is_some() {
+                    let first_relay = sub.responded_relays.get(0).unwrap().clone();
+                    tx.send((first_relay, sub.end_of_stored_events_message.take().unwrap())).ok();
+                } else {
+                    tx.send((self.relays.get(0).unwrap().clone(), RelayMessage::new_eose(sub.name.clone()))).ok();
                 }
             }
         }
@@ -134,7 +139,7 @@ impl NostrClient {
     }
 
     async fn handle_relay_message(&mut self, relay_url: Url, message: RelayMessage, tx: &UnboundedSender<(Url, RelayMessage)>) -> Option<()> {
-        println!("NostrClient: handle_relay_message: {message:?}");
+        // println!("NostrClient: handle_relay_message: {message:?}");
 
         let mut subscription = None;
         let mut message_id = None;
@@ -159,6 +164,8 @@ impl NostrClient {
 
             if let Some(sub) = sub {
                 if sub_ended {
+                    sub.end_of_stored_events_message = Some(message);
+
                     sub.responded_relays.push(relay_url.clone());
 
                     return Some(());
@@ -194,7 +201,7 @@ impl NostrClient {
     }
 
     async fn handle_client_message(&mut self, message: ClientMessage, client_messages_txs: &HashMap<Url, UnboundedSender<String>>) -> Option<()> {
-        println!("NostrClient: handle_client_message: {message:?}");
+        // println!("NostrClient: handle_client_message: {message:?}");
 
         let mut subscription = None;
 
@@ -207,19 +214,28 @@ impl NostrClient {
         let json = message.to_json();
 
         if let Some(subscription_id) = &subscription {
-            self.subscriptions.insert(subscription_id.clone(), NostrSubscription::new(subscription_id.clone()));
-        }
+            if !self.subscriptions.contains_key(subscription_id) {
+                // println!("started subscription: {subscription_id}");
 
-        // Send to all relays
-        for (relay, tx) in client_messages_txs.iter() {
-            if let Some(subscription_id) = &subscription {
-                let sub = self.subscriptions.get_mut(subscription_id).unwrap();
-                sub.asked_relays.push(relay.clone());
+                self.subscriptions.insert(subscription_id.clone(), NostrSubscription::new(subscription_id.clone()));
+
+                // Send to all relays
+                for (relay, tx) in client_messages_txs.iter() {
+                    if let Some(subscription_id) = &subscription {
+                        let sub = self.subscriptions.get_mut(subscription_id).unwrap();
+                        sub.asked_relays.push(relay.clone());
+                    }
+
+                    match tx.send(json.clone()) {
+                        Ok(_) => {}
+                        Err(_) => {}
+                    }
+                }
             }
-
-            match tx.send(json.clone()) {
-                Ok(_) => {}
-                Err(_) => {}
+        } else {
+            // Probably write, send to all relays
+            for (_, tx) in client_messages_txs.iter() {
+                tx.send(json.clone()).ok();
             }
         }
 

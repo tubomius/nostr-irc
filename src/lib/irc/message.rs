@@ -1,7 +1,3 @@
-use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, Metadata, SubscriptionFilter, Tag};
-use nostr::event::{TagData, TagKind};
-use tokio::sync::mpsc::UnboundedSender;
-use crate::irc::client_data::ClientDataHolder;
 use crate::irc::message::IRCMessage::UNKNOWN;
 
 #[derive(Debug, Clone)]
@@ -11,6 +7,7 @@ pub enum IRCMessage {
     QUIT(String),
     PASS(String),
     JOIN(String),
+    PART(String),
     LIST(),
     PRIVMSG(String, String),
     USER(String, String, String, String),
@@ -51,6 +48,11 @@ impl IRCMessage {
                         parts.get(1).unwrap().to_string(),
                     )
                 }
+                "PART" => {
+                    Self::PART(
+                        parts.get(1).unwrap().to_string(),
+                    )
+                }
                 "PASS" => {
                     Self::PASS(
                         parts.get(1).unwrap().to_string(),
@@ -74,128 +76,6 @@ impl IRCMessage {
             }
         }  else {
             UNKNOWN(parts.into_iter().map(|s| s.to_string()).collect())
-        }
-    }
-
-    pub async fn handle_message(&self, client_data: &ClientDataHolder, nostr_tx: &UnboundedSender<ClientMessage>) -> Option<Option<String>> {
-        match self {
-            Self::CAP(s, _) => {
-                if s == "LS" {
-                    Some(Some(format!("CAP * LS")))
-                } else {
-                    let nick = client_data.read().await.get_nick();
-                    let private_key = client_data.read().await.get_private_key();
-
-                    if !private_key.is_none() {
-                        if let Some(nick) = nick {
-                            return Some(Some(format!("001 {nick} :Welcome to the Internet Relay Network")))
-                        }
-                    }
-
-                    Some(Some(format!("ERROR :No nick or no private key, set password to your private key")))
-                }
-            },
-            Self::QUIT(_) => {
-                Some(Some(format!("QUIT")))
-            }
-            Self::LIST() => {
-                let channel_list = ClientMessage::new_req(
-                    format!("list"),
-                    vec![
-                        SubscriptionFilter::new()
-                            .kind(Kind::Base(KindBase::ChannelCreation))
-                    ],
-                );
-
-                nostr_tx.send(channel_list).ok();
-
-                Some(None)
-            }
-            Self::JOIN(channel) => {
-                let channels = channel.split(",");
-
-                for channel in channels {
-                    let channel = channel.split_once("#").unwrap().1;
-
-                    let channel_info = ClientMessage::new_req(
-                        format!("{channel}-info"),
-                        vec![SubscriptionFilter::new().id(channel)],
-                    );
-
-                    nostr_tx.send(channel_info).ok();
-
-                    let channel_messages = ClientMessage::new_req(
-                        format!("{channel}-messages"),
-                        vec![SubscriptionFilter::new().kind(Kind::Base(KindBase::ChannelMessage)).limit(200).event(channel.parse().unwrap())],
-                    );
-
-                    nostr_tx.send(channel_messages).ok();
-                }
-
-                Some(None)
-            }
-            Self::PRIVMSG(channel, message) => {
-                let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
-
-                let channel = channel.split_once("#").unwrap().1;
-
-                let event: Event = EventBuilder::new(
-                    Kind::Base(KindBase::ChannelMessage),
-                    message,
-                    &[Tag::new(TagData::Generic(
-                        TagKind::E,
-                        vec![channel.to_string()],
-                    ))],
-                ).to_event(&my_keys).unwrap();
-
-                let msg = ClientMessage::new_event(event);
-                nostr_tx.send(msg).ok();
-
-                Some(None)
-            }
-            Self::PASS(s) => {
-                client_data.write().await.set_private_key(s.clone());
-
-                Some(None)
-            }
-            Self::NICK(s) => {
-                let old_nick = client_data.read().await.get_nick().clone();
-
-                client_data.write().await.set_nick(s.clone());
-
-                if let Some(old_nick) = old_nick {
-                    let metadata = Metadata::new()
-                        .name(s)
-                        .display_name(s);
-
-                    let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
-
-                    let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
-
-                    let msg = ClientMessage::new_event(event);
-                    nostr_tx.send(msg).ok();
-
-                    Some(Some(format!(":{old_nick} NICK {s}")))
-                } else {
-                    Some(None)
-                }
-            }
-            Self::USER(_, _, _, _) => {
-                let metadata = Metadata::new()
-                    .name(client_data.read().await.get_nick().unwrap())
-                    .display_name(client_data.read().await.get_nick().unwrap())
-                    .about("description wat");
-
-                let my_keys = client_data.read().await.identity.as_ref().unwrap().clone();
-
-                let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
-
-                let msg = ClientMessage::new_event(event);
-                nostr_tx.send(msg).ok();
-
-                Some(None)
-            }
-            _ => Some(None),
         }
     }
 }

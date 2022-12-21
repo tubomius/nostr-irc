@@ -56,7 +56,7 @@ impl NostrRelayConnection {
     }
 
     pub async fn send_client_message(&mut self, write_stream: &mut SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>, message: String) -> Result<(), Box<dyn Error>> {
-        println!("NostrRelayConnection: handle_client_message: {message}");
+        // println!("NostrRelayConnection: handle_client_message: {message}");
 
         write_stream.send(tokio_tungstenite::tungstenite::Message::Text(message)).await.map_err(|e| e.into())
     }
@@ -64,7 +64,7 @@ impl NostrRelayConnection {
     pub async fn forward_relay_message(&mut self, tx: &mut UnboundedSender<RelayMessage>, message: tokio_tungstenite::tungstenite::Message) -> Result<(), Box<dyn Error>> {
         match message {
             Message::Text(text) => {
-                println!("NostrRelayConnection: handle_relay_message: {text}");
+                // println!("NostrRelayConnection: handle_relay_message: {text}");
 
                 tx.send(RelayMessage::from_json(&*text)?).map_err(|e| e.into())
             }

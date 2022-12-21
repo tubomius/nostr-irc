@@ -243,7 +243,6 @@ impl NostrClient {
                         Err(_) => {}
                     }
                 }
-                self.subscriptions.remove(subscription_id);
             }
         } else {
             // Probably write, send to all relays

@@ -29,6 +29,7 @@ impl IRCServer {
             "wss://nostr-01.bolt.observer".to_string(),
             "wss://relay.r3d.red".to_string(),
             "wss://nostr.slothy.win".to_string(),
+            "wss://nostr-relay.untethr.me/".to_string(),
         ];
 
         let listener = TcpListener::bind(&addr).await?;

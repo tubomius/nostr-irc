@@ -11,19 +11,26 @@ Experimental code, use with caution.
 - Join a channel with /join #channelkey
 - Chat away
 
-# IRC-nostr feature mapping
+# IRC -> nostr feature mapping
 
-| Supported | IRC                 | nostr           | Description                                                         |
-|-----------|---------------------|-----------------|---------------------------------------------------------------------|
-| ✅         | NICK                | Metadata        | Sends nostr metadata event when you connect and/or change your nick |
-| ✅         | NICK                | Metadata        | Syncs metadata of users seen in channel and renames them if needed  |
-| ✅         | PRIVMSG #channelkey | Channel message | Sends nostr event 42:s for channel messages                         |
-| ✅         | JOIN #channelkey    | REQ             | Subscribes to channel messages, and gets last 200                   |
-| ✅         | JOIN                | REQ             | Sends a JOIN for users that were seen                               |
-| ✅         | TOPIC               | Metadata        | Gets topic from channel metadata name                               |
-| ❌         | PART #key           | CLOSE           | Closes subscriptions but not informing IRC client yet               |
-| ❌         | PRIVMSG userkey     | Encrypted DM?   |                                                                     |
-| ❌         | JOIN #string        | Channel create  | Create channel with that name and join #channelkey instead          |
+|     | IRC                 | nostr           | Description                                                         |
+|-----|---------------------|-----------------|---------------------------------------------------------------------|
+| ✅   | NICK                | Metadata        | Sends nostr metadata event when you connect and/or change your nick |
+| ✅   | PRIVMSG #channelkey | Channel message | Sends nostr event 42:s for channel messages                         |
+| ✅   | JOIN #channelkey    | REQ             | Subscribes to channel messages, and gets last 200                   |
+| ✅   | PART #key           | CLOSE           | Closes subscriptions but not informing IRC client yet               |
+| ❌   | PRIVMSG userkey     | Encrypted DM?   |                                                                     |
+| ❌   | JOIN #string        | Channel create  | Create channel with that name and join #channelkey instead          |
+
+# nostr -> IRC feature mapping
+
+|     | nostr                     | IRC                 | Description                                                        |
+|-----|---------------------------|---------------------|--------------------------------------------------------------------|
+| ✅   | Author metadata           | NICK                | Syncs metadata of users seen in channel and renames them if needed |
+| ✅   | Channel message           | PRIVMSG #channelkey | Sends IRC messages for channel messages                            |
+| ✅   | Channel message           | JOIN #channelkey    | If this is the first message you see from this key, sends a JOIN   |
+| ✅   | Channel metadata/creation | TOPIC               | Sets topic from channel metadata name                              |
+| ❌   | PRIVMSG userkey           | Encrypted DM?       |                                                                    |
 
 # Features/TODO
 
@@ -34,3 +41,5 @@ Experimental code, use with caution.
 ❌ Publish
 
 ❌ Make relay list configurable
+
+❌ Dockerize

@@ -1,212 +1,145 @@
+use log::*;
 use std::collections::HashMap;
 use std::error::Error;
 use nostr::url::Url;
 use tokio::net::TcpStream;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::task::JoinSet;
 use nostr::{ClientMessage, Event, EventBuilder, Kind, KindBase, RelayMessage, SubscriptionFilter};
 use nostr::event::{TagKind};
 use nostr::hashes::hex::ToHex;
-use tokio::net::tcp::OwnedWriteHalf;
-use tokio::sync::mpsc::{UnboundedSender};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::broadcast::Receiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::irc::channel::{IRCChannel};
 use crate::irc::client_data::IRCClientData;
 use crate::irc::message::IRCMessage;
-use crate::nostr::client::NostrClient;
+use crate::irc::server::{PeerMessage, ServerMessage};
 
 pub struct IRCPeer {
+    peer_id: u64,
     client_data: IRCClientData,
-    channels: HashMap<String, IRCChannel>,
-    set: JoinSet<()>,
+    tasks: JoinSet<()>,
+    socket_reader: Lines<BufReader<OwnedReadHalf>>,
+    socket_writer: OwnedWriteHalf,
+    tx: UnboundedSender<PeerMessage>,
+    rx: UnboundedReceiver<ServerMessage>,
+    sent_welcome: bool,
 }
 
 impl IRCPeer {
-    pub fn new() -> Self {
+    pub fn new(socket: TcpStream, tx: UnboundedSender<PeerMessage>, rx: UnboundedReceiver<ServerMessage>, peer_id: u64) -> Self {
+        let (socket_reader, socket_writer) = socket.into_split();
+
+        let socket_reader = BufReader::new(socket_reader).lines();
+
         Self {
+            peer_id,
             client_data: IRCClientData::new(),
-            channels: HashMap::new(),
-            set: JoinSet::new(),
+            tasks: JoinSet::new(),
+            socket_reader,
+            socket_writer,
+            tx,
+            rx,
+            sent_welcome: false,
         }
     }
 
-    pub async fn run(&mut self, socket: TcpStream, mut nostr_client: NostrClient) {
-        let (reader, mut writer) = socket.into_split();
-        let reader = BufReader::new(reader);
-
-        let (nostr_client_tx, mut nostr_rx) = mpsc::unbounded_channel();
-        let (nostr_tx, nostr_client_rx) = mpsc::unbounded_channel();
-
-        self.set.spawn(async move {
-            nostr_client.run(nostr_client_tx, nostr_client_rx).await;
-        });
-
-        let mut lines = reader.lines();
-
+    pub async fn run(&mut self) {
         loop {
             tokio::select!(
-                Some((relay_url, message)) = nostr_rx.recv() => {
-                    self.handle_nostr_message(relay_url, message, &nostr_tx, &mut writer).await.ok();
+                Some(message) = self.rx.recv() => {
+                    self.handle_server_message(message).await;
                 }
-                Ok(msg) = lines.next_line() => {
-                    if let Some(msg) = msg {
-                        self.handle_message(msg, &nostr_tx, &mut writer).await;
+                Ok(message) = self.socket_reader.next_line() => {
+                    if let Some(message) = message {
+                        self.handle_irc_message(message).await;
                     } else {
                         break;
                     }
                 }
-                Some(_) = self.set.join_next() => {
+                Some(_) = self.tasks.join_next() => {
                     // nothing
                 }
             );
         }
     }
 
-    pub async fn handle_nostr_message(&mut self, _relay_url: Url, message: RelayMessage, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf) -> Result<(), Box<dyn Error>> {
-        match &message {
-            RelayMessage::Event { event, .. } => {
-                match &event.kind {
-                    Kind::Base(k) => {
-                        match k {
-                            KindBase::ChannelMetadata => {
-                                // println!("handle_nostr_message: ChannelMetadata: {event:?}");
+    pub async fn handle_server_message(&mut self, message: ServerMessage) -> Option<()> {
+        info!("{message:?}");
 
-                                let channel = event.id.to_hex();
+        match message {
+            ServerMessage::SendMessage { channel, message, nickname } => {
+                self.socket_writer.write(format!(":{nickname} PRIVMSG #{channel} :{message}\r\n").as_ref()).await.ok();
+            }
+            ServerMessage::ChangeNickname { public_key, old_nickname, new_nickname } => {
+                let our_public_key = self.client_data.get_public_key();
 
-                                self.get_or_add_channel(channel.to_string());
+                if let Some(our_public_key) = our_public_key {
+                    if public_key == our_public_key {
+                        if !self.sent_welcome {
+                            self.sent_welcome = true;
 
-                                let channel = self.channels.get_mut(&channel).unwrap();
-
-                                channel.handle_nostr_channel_metadata(message, writer, nostr_tx, &self.client_data).await;
-                            },
-                            KindBase::ChannelMessage => {
-                                for tag in &event.tags {
-                                    if let Ok(tk) = tag.kind() {
-                                        match tk {
-                                            TagKind::E => {
-                                                let channel = tag.content();
-
-                                                if let Some(channel) = channel {
-                                                    self.get_or_add_channel(channel.to_string());
-
-                                                    let channel = self.channels.get_mut(channel).unwrap();
-
-                                                    channel.handle_nostr_channel_message(message.clone(), writer, nostr_tx, &self.client_data, false).await;
-                                                }
-
-                                                break;
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            },
-                            KindBase::ChannelCreation => {
-                                // println!("ChannelCreation {event:?}");
-
-                                let channel = event.id.to_hex();
-
-                                self.get_or_add_channel(channel.to_string());
-
-                                let channel = self.channels.get_mut(&channel).unwrap();
-
-                                channel.handle_nostr_channel_creation(message, writer, nostr_tx, &self.client_data).await;
-                            },
-                            KindBase::Metadata => {
-                                // println!("Metadata {event:?}");
-
-                                for (_, channel) in self.channels.iter_mut() {
-                                    channel.handle_nostr_metadata(&message, writer, nostr_tx, &self.client_data).await;
-                                }
-                            }
-                            _ => {}
+                            self.socket_writer.write(format!("001 {new_nickname} :Welcome to the Internet Relay Network").as_ref()).await.ok();
                         }
-                    }
-                    _ => {}
-                }
-            }
-            RelayMessage::Notice { .. } => {}
-            RelayMessage::EndOfStoredEvents { subscription_id } => {
-                if subscription_id.contains("-messages") || subscription_id.contains("-info") {
-                    let channel = subscription_id.split_once("-").unwrap().0;
 
-                    let channel = self.channels.get_mut(channel);
-
-                    if let Some(channel) = channel {
-                        channel.handle_nostr_channel_message(message.clone(), writer, nostr_tx, &self.client_data, false).await;
-                    }
-                } else if subscription_id.contains("-user-metadata") {
-                    for (_, channel) in self.channels.iter_mut() {
-                        channel.handle_nostr_metadata(&message, writer, nostr_tx, &self.client_data).await;
+                        self.socket_writer.write(format!("NICK {new_nickname}\r\n").as_ref()).await.ok();
+                    } else {
+                        self.socket_writer.write(format!(":{old_nickname} NICK {new_nickname}\r\n").as_ref()).await.ok();
                     }
                 }
             }
-            RelayMessage::Ok { .. } => {}
-            RelayMessage::Empty => {}
+            ServerMessage::ChangeTopic { channel, topic } => {
+                self.socket_writer.write(format!(":admin TOPIC #{channel} :{topic}\r\n").as_ref()).await.ok();
+            }
+            ServerMessage::PeerJoined { channel, nickname } => {
+                self.socket_writer.write(format!(":{nickname} JOIN #{channel}\r\n").as_ref()).await.ok();
+                self.socket_writer.write(format!("353 {nickname} = #{channel} :{nickname}\r\n").as_ref()).await.ok();
+                self.socket_writer.write(format!("366 {nickname} = #{channel} :End of NAMES list\r\n").as_ref()).await.ok();
+            }
+            ServerMessage::PeerLeft { channel, nickname } => {
+                self.socket_writer.write(format!(":{nickname} PART #{channel}\r\n").as_ref()).await.ok();
+            }
+            ServerMessage::Join { channel, nickname } => {
+                self.socket_writer.write(format!(":{nickname} JOIN #{channel}\r\n").as_ref()).await.ok();
+            }
+            ServerMessage::CreatedChannel { channel } => {
+                self.tx.send(PeerMessage::AddChannel { peer_id: self.peer_id, public_key: channel }).ok();
+            }
         }
 
-        Ok(())
+        None
     }
 
-    pub async fn handle_message(&mut self, msg: String, nostr_tx: &UnboundedSender<ClientMessage>, writer: &mut OwnedWriteHalf) -> Option<()> {
-        println!("irc client sent: {msg}");
+    pub async fn handle_irc_message(&mut self, message: String) -> Option<()> {
+        info!("{message:?}");
 
-        let msg = IRCMessage::from_string(msg);
+        let message = IRCMessage::from_string(message);
 
-        let response = match msg {
+        match message {
             IRCMessage::CAP(s, _) => {
                 if s == "LS" {
-                    Some(Some(format!("CAP * LS")))
-                } else {
-                    let nick = self.client_data.get_nick();
-                    let private_key = self.client_data.get_private_key();
-
-                    if !private_key.is_none() {
-                        if let Some(nick) = nick {
-                            Some(Some(format!("001 {nick} :Welcome to the Internet Relay Network")))
-                        } else {
-                            Some(Some(format!("ERROR :No nick or no private key, set password to your private key")))
-                        }
-                    } else {
-                        Some(Some(format!("ERROR :No nick or no private key, set password to your private key")))
-                    }
+                    self.socket_writer.write(format!("CAP * LS\r\n").as_ref()).await.ok();
                 }
             },
             IRCMessage::QUIT(_) => {
-                Some(Some(format!("QUIT")))
+                self.socket_writer.write(format!("QUIT\r\n").as_ref()).await.ok();
             }
-            IRCMessage::WHO(_) => {
-                Some(None)
-            }
-            IRCMessage::LIST() => {
-                let channel_list = ClientMessage::new_req(
-                    format!("list"),
-                    vec![
-                        SubscriptionFilter::new()
-                            .kind(Kind::Base(KindBase::ChannelCreation))
-                    ],
-                );
-
-                nostr_tx.send(channel_list).ok();
-
-                Some(None)
-            }
+            IRCMessage::WHO(_) => {}
+            IRCMessage::LIST() => {}
             IRCMessage::JOIN(channel) => {
                 let channels = channel.split(",");
 
                 for channel in channels {
                     let channel = channel.split_once("#").unwrap().1;
 
-                    let irc_channel = {
-                        self.get_or_add_channel(channel.to_string());
-
-                        self.channels.get_mut(channel).unwrap()
-                    };
-
-                    irc_channel.join(&nostr_tx, writer, &self.client_data).await;
+                    if let Ok(channel_key) = channel.parse() {
+                        self.tx.send(PeerMessage::AddChannel { peer_id: self.peer_id, public_key: channel_key }).ok();
+                    } else {
+                        // Create channel
+                        self.tx.send(PeerMessage::CreateChannel { peer_id: self.peer_id, name: channel.to_string() }).ok();
+                    }
                 }
-
-                Some(None)
             }
             IRCMessage::PART(channel) => {
                 let channels = channel.split(",");
@@ -214,111 +147,35 @@ impl IRCPeer {
                 for channel in channels {
                     let channel = channel.split_once("#").unwrap().1;
 
-                    let irc_channel = {
-                        self.get_or_add_channel(channel.to_string());
-
-                        self.channels.get_mut(channel).unwrap()
-                    };
-
-                    irc_channel.part(&nostr_tx, writer, &self.client_data).await;
-
-                    self.channels.remove(channel);
+                    self.tx.send(PeerMessage::LeaveChannel { peer_id: self.peer_id, public_key: channel.parse().unwrap() }).ok();
                 }
-
-                Some(None)
             }
             IRCMessage::PRIVMSG(channel, message) => {
-                println!("PRIVMSG {channel} {message}");
+                let channel = channel.split_once("#").unwrap().1;
 
-                let my_keys = self.client_data.identity.as_ref().unwrap().clone();
-
-                if channel.contains("#") {
-                    let channel = channel.split_once("#").unwrap().1;
-
-                    let irc_channel = {
-                        self.get_or_add_channel(channel.to_string());
-
-                        self.channels.get_mut(channel).unwrap()
-                    };
-
-                    irc_channel.send_message(message, &my_keys, nostr_tx).await;
-                } else {
-                    // @todo encrypted DM
-                }
-
-                Some(None)
+                self.tx.send(PeerMessage::SendMessage { peer_id: self.peer_id, channel: channel.parse().unwrap(), message }).ok();
             }
             IRCMessage::PASS(s) => {
                 self.client_data.set_private_key(s.clone());
 
-                Some(None)
+                let public_key = self.client_data.get_public_key();
+
+                if let Some(public_key) = public_key {
+                    self.tx.send(PeerMessage::AddNickname { peer_id: self.peer_id, public_key }).ok();
+                    self.tx.send(PeerMessage::SetKeys { peer_id: self.peer_id, keys: self.client_data.identity.as_ref().unwrap().clone() }).ok();
+                }
             }
             IRCMessage::NICK(s) => {
-                let old_nick = self.client_data.get_nick().clone();
+                let public_key = self.client_data.get_public_key();
 
-                self.client_data.set_nick(s.clone());
-
-                if let Some(old_nick) = old_nick {
-                    let metadata = nostr::Metadata::new()
-                        .name(&s);
-
-                    let my_keys = self.client_data.identity.as_ref().unwrap().clone();
-
-                    let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
-
-                    let msg = ClientMessage::new_event(event);
-                    nostr_tx.send(msg).ok();
-
-                    Some(Some(format!(":{old_nick} NICK {s}")))
-                } else {
-                    Some(None)
+                if let Some(public_key) = public_key {
+                    self.tx.send(PeerMessage::ChangeNickname { peer_id: self.peer_id, public_key, nickname: s }).ok();
                 }
             }
-            IRCMessage::USER(_, _, _, _) => {
-                let metadata = nostr::Metadata::new()
-                    .name(self.client_data.get_nick().unwrap())
-                    .about("description wat");
-
-                let my_keys = self.client_data.identity.as_ref().unwrap().clone();
-
-                let event: Event = EventBuilder::set_metadata(&my_keys, metadata).unwrap().to_event(&my_keys).unwrap();
-
-                let msg = ClientMessage::new_event(event);
-                nostr_tx.send(msg).ok();
-
-                Some(None)
-            }
-            _ => Some(None),
+            IRCMessage::USER(_, _, _, _) => {}
+            _ => {},
         };
 
-        if let Some(response) = response {
-            if let Some(response) = response {
-                if response == "QUIT" {
-                    return None;
-                }
-
-                match writer.write(response.as_ref()).await {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
-
-                match writer.write("\r\n".as_ref()).await {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
-            }
-        }
-
         Some(())
-    }
-
-    pub fn get_or_add_channel(&mut self, channel_id: String) {
-        let channels = &mut self.channels;
-
-        if let Some(_) = channels.get_mut(&channel_id) {
-            return;
-        }
-
-        channels.insert(channel_id.to_string(), IRCChannel::new(channel_id.to_string()));
     }
 }

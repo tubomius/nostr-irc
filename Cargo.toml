@@ -23,3 +23,5 @@ serde_json = "1.0.91"
 tokio-stream = { version = "0.1.11" }
 async-stream = "0.3.3"
 async-recursion = "1.0.0"
+env_logger = "0.10.0"
+log = { version = "0.4.17", features = ["max_level_trace", "release_max_level_info"] }

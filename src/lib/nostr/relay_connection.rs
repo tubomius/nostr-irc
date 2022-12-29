@@ -20,11 +20,11 @@ impl NostrRelayConnection {
 
     pub async fn connect(&mut self, relay_url: Url, mut tx: UnboundedSender<RelayMessage>, mut rx: UnboundedReceiver<String>) -> Result<(), Box<dyn Error>> {
         loop {
-            println!("NostrRelayConnection: connecting: {relay_url}");
+            // println!("NostrRelayConnection: connecting: {relay_url}");
 
             match tokio_tungstenite::connect_async(&relay_url).await {
                 Ok((stream, _)) => {
-                    println!("NostrRelayConnection: connected: {relay_url}");
+                    // println!("NostrRelayConnection: connected: {relay_url}");
 
                     let (mut write_stream, mut read_stream) = stream.split();
 
@@ -43,15 +43,15 @@ impl NostrRelayConnection {
                         }
                     }
                 }
-                Err(e) => {
-                    println!("NostrRelayConnection: error: {e:?}");
+                Err(_e) => {
+                    // println!("NostrRelayConnection: error: {e:?}");
                 }
             }
 
-            println!("NostrRelayConnection: disconnected: {relay_url}");
+            // println!("NostrRelayConnection: disconnected: {relay_url}");
 
             // Reconnect?
-            tokio::time::sleep(Duration::from_secs(10_000)).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     }
 

@@ -1,9 +1,11 @@
+use log::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 use nostr::{ClientMessage, RelayMessage};
 use nostr::url::Url;
+use tokio::sync::broadcast::Sender;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
@@ -11,20 +13,36 @@ use tokio_stream::{Stream, StreamExt, StreamMap};
 use crate::nostr::relay_connection::NostrRelayConnection;
 use crate::nostr::subscription::NostrSubscription;
 
+pub struct RelayMessageMetadata {
+    pub is_history: bool,
+}
+
+impl RelayMessageMetadata {
+    pub fn new(is_history: bool) -> Self {
+        Self {
+            is_history,
+        }
+    }
+}
+
 pub struct NostrClient {
     relays: Vec<Url>,
     subscriptions: HashMap<String, NostrSubscription>,
+    tx: UnboundedSender<(RelayMessage, RelayMessageMetadata)>,
+    rx: UnboundedReceiver<ClientMessage>,
 }
 
 impl NostrClient {
-    pub fn new(relays: Vec<String>) -> Self {
+    pub fn new(relays: Vec<String>, tx: UnboundedSender<(RelayMessage, RelayMessageMetadata)>, rx: UnboundedReceiver<ClientMessage>) -> Self {
         Self {
             relays: relays.into_iter().map(|r| r.parse().unwrap()).collect(),
             subscriptions: HashMap::new(),
+            tx,
+            rx,
         }
     }
 
-    pub async fn run(&mut self, tx: UnboundedSender<(Url, RelayMessage)>, mut rx: UnboundedReceiver<ClientMessage>) -> Option<()> {
+    pub async fn run(&mut self) -> Option<()> {
         let mut client_messages_txs = HashMap::new();
         let mut relay_messages_rxs = StreamMap::new();
 
@@ -57,26 +75,30 @@ impl NostrClient {
         loop {
             tokio::select!(
                 Some((relay_url, message)) = relay_messages_rxs.next() => {
-                    self.handle_relay_message(relay_url, message, &tx).await;
+                    self.handle_relay_message(relay_url, message).await;
                 }
-                Some(message) = rx.recv() => {
+                Some(message) = self.rx.recv() => {
                     self.handle_client_message(message, &client_messages_txs).await;
                 }
                 Some(_) = set.join_next() => {
                     // nothing
                 }
                 _ = checker.tick() => {
-                    self.check_subscriptions(&tx).await;
+                    self.check_subscriptions().await;
                 }
             );
         }
     }
 
-    async fn check_subscriptions(&mut self, tx: &UnboundedSender<(Url, RelayMessage)>) -> Option<()> {
+    async fn check_subscriptions(&mut self) -> Option<()> {
         let now = Instant::now();
         let max_age = Duration::from_secs(5);
 
         for (_, sub) in self.subscriptions.iter_mut() {
+            if sub.inactive {
+                continue;
+            }
+
             if sub.done {
                 sub.data.clear();
 
@@ -121,14 +143,14 @@ impl NostrClient {
                             sub.seen_ids.insert(message_id);
                         }
 
-                        tx.send((first_relay.clone(), msg)).ok();
+                        self.tx.send((msg, RelayMessageMetadata::new(true))).ok();
                     }
                 }
                 if sub.end_of_stored_events_message.is_some() {
                     let first_relay = sub.responded_relays.get(0).unwrap().clone();
-                    tx.send((first_relay, sub.end_of_stored_events_message.take().unwrap())).ok();
+                    self.tx.send((sub.end_of_stored_events_message.take().unwrap(), RelayMessageMetadata::new(true))).ok();
                 } else {
-                    tx.send((self.relays.get(0).unwrap().clone(), RelayMessage::new_eose(sub.name.clone()))).ok();
+                    self.tx.send((RelayMessage::new_eose(sub.name.clone()), RelayMessageMetadata::new(true))).ok();
                 }
             }
         }
@@ -136,7 +158,7 @@ impl NostrClient {
         Some(())
     }
 
-    async fn handle_relay_message(&mut self, relay_url: Url, message: RelayMessage, tx: &UnboundedSender<(Url, RelayMessage)>) -> Option<()> {
+    async fn handle_relay_message(&mut self, relay_url: Url, message: RelayMessage) -> Option<()> {
         // println!("NostrClient: handle_relay_message: {message:?}");
 
         let mut subscription = None;
@@ -195,11 +217,11 @@ impl NostrClient {
             return Some(());
         }
 
-        tx.send((relay_url, message)).ok()
+        self.tx.send((message, RelayMessageMetadata::new(false))).ok().map(|_| ())
     }
 
     async fn handle_client_message(&mut self, message: ClientMessage, client_messages_txs: &HashMap<Url, UnboundedSender<String>>) -> Option<()> {
-        // println!("NostrClient: handle_client_message: {message:?}");
+        info!("{message:?}");
 
         let mut subscription = None;
 
@@ -240,6 +262,13 @@ impl NostrClient {
                         Ok(_) => {}
                         Err(_) => {}
                     }
+                }
+                if let Some(sub) = self.subscriptions.get_mut(subscription_id) {
+                    sub.seen_ids.clear();
+                    sub.data.clear();
+                    sub.responded_relays.clear();
+                    sub.asked_relays.clear();
+                    sub.inactive = true;
                 }
             }
         } else {
